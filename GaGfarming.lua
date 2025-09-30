@@ -1,9 +1,11 @@
--- Saad helper pack v2.8 — Sliders + Reset + Noclip + Gear Panel + Anti-AFK
+-- Saad helper pack v2.9 — Sliders + Reset + Noclip + Gear Panel + Anti-AFK
 -- (TP, Sell (TP+retour+caméra figée), Buy All Seeds/Gear + Autos, BUY EVO (auto 1:50), BUY EGGS (auto 15:00))
--- +++++ EVO MANAGER (compact) +++++
+-- +++++ EVO MANAGER (compact + bubble) +++++
 -- Submit (Held) Evo I/II/III (ignore "seed", exclut "IV") + Plant EVO Seeds (comptage backpack, retries ≥5) à ta position (multi-passes auto)
 -- UI: Récap des seeds non plantées (hors IV) — liste cochable retirée, tous I/II/III inclus
 -- Minimize (—/▣) + Alt+M ; Toggle EVO: Alt+E + bouton « EVO »
+-- >>> Nouveau: Réduction en bulle déplaçable (bouton ● + Alt+B), clic = ré-ouvrir
+-- >>> Compact UI: statut placé juste sous le récap, hauteur totale réduite
 -- >>> Fix: positions en scale (UDim2) + clamp écran + pcall UIStroke + Active sur labels
 -- >>> Anti-AFK: nudge mouvement périodique + fallback VirtualUser Idled
 -- >>> Planting delay: +20% (PLANT_DELAY_FACTOR = 1.2)
@@ -237,12 +239,10 @@ local function makeDraggable(frame, handle)
 	handle.Active = true; handle.Selectable = true
 	local dragging = false
 	local dragStart, startPos, dragInputId
-
 	local function update(input)
 		local delta = input.Position - dragStart
 		frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
 	end
-
 	local function begin(input)
 		dragging = true
 		dragStart = input.Position
@@ -255,7 +255,6 @@ local function makeDraggable(frame, handle)
 			end
 		end)
 	end
-
 	handle.InputBegan:Connect(function(i)
 		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
 			begin(i)
@@ -849,7 +848,7 @@ do
 	end)
 end
 
--- ======== EVO MANAGER (COMPACT) ========
+-- ======== EVO MANAGER (COMPACT + BUBBLE) ========
 local character = player.Character or player.CharacterAdded:Wait()
 local humanoid = character:WaitForChild("Humanoid")
 player.CharacterAdded:Connect(function(char) character = char; humanoid = char:WaitForChild("Humanoid") end)
@@ -920,10 +919,9 @@ end
 -- ✅ Nouveau critère compact: tout EVO I/II/III (pas "seed" tenu en main, pas IV) est éligible
 local function isEligibleEvoToolName(toolName)
 	local lname = toolName:lower()
-	if lname:find("seed", 1, true) then return false end -- on ne "submit" pas des seeds, seulement des plantes tenues
+	if lname:find("seed", 1, true) then return false end
 	local canon = canonicalEvoName(toolName)
 	if isEvoIVByName(canon) then return false end
-	-- Doit contenir un niveau I, II, ou III (et "Evo")
 	local r = canon:match("%s([IVX]+)%s*$")
 	return (r == "I" or r == "II" or r == "III") and canon:lower():find("evo",1,true) ~= nil
 end
@@ -1005,29 +1003,48 @@ local function equipTool(tool, timeout)
 end
 local function submitHeld() local ok,err=pcall(function() Submit:FireServer("Held") end); return ok,err end
 
--- ====== EVO UI compact ======
+-- ====== EVO UI compact (positions resserrées) ======
 local evoGui = Instance.new("ScreenGui"); evoGui.Name="EvoManager"; evoGui.ResetOnSpawn=false; evoGui.IgnoreGuiInset=true; evoGui.Parent=playerGui
+
+-- BUBBLE UI (hidden by default)
+local bubbleBtn = Instance.new("Frame")
+bubbleBtn.Name = "EvoBubble"
+bubbleBtn.Size = UDim2.fromOffset(46, 46)
+bubbleBtn.Position = UDim2.fromScale(0.88, 0.18)
+bubbleBtn.BackgroundColor3 = Color3.fromRGB(95, 85, 140)
+bubbleBtn.Visible = false
+bubbleBtn.Parent = evoGui
+rounded(bubbleBtn, 23)
+local bubbleStroke = Instance.new("UIStroke"); bubbleStroke.Thickness=1.5; bubbleStroke.Color=Color3.fromRGB(210,210,235); bubbleStroke.Parent=bubbleBtn
+local bubbleGlyph = Instance.new("TextLabel"); bubbleGlyph.Size=UDim2.fromScale(1,1); bubbleGlyph.BackgroundTransparency=1; bubbleGlyph.Text="EVO"; bubbleGlyph.Font=Enum.Font.GothamBold; bubbleGlyph.TextSize=14; bubbleGlyph.TextColor3=Color3.fromRGB(255,255,255); bubbleGlyph.Parent=bubbleBtn
+makeDraggable(bubbleBtn, bubbleBtn)
+
 local evoFrame = Instance.new("Frame")
-evoFrame.Size = UDim2.fromOffset(420, 370)   -- plus compact
+evoFrame.Size = UDim2.fromOffset(420, 310)   -- << réduit de 370 -> 310
 evoFrame.Position = UDim2.fromScale(0.62, 0.04)
 evoFrame.BackgroundColor3=Color3.fromRGB(24,24,28); evoFrame.BorderSizePixel=0; evoFrame.Visible=false; evoFrame.Parent=evoGui
 rounded(evoFrame,10)
 pcall(function() local s=Instance.new("UIStroke"); s.Thickness=1; s.Color=Color3.fromRGB(70,70,80); s.Parent=evoFrame end)
-makeDraggable(evoFrame, evoFrame)  -- handle = frame entier (drag Touch ok)
+makeDraggable(evoFrame, evoFrame)
 clampOnScreen(evoFrame)
 
-local evoTitle = Instance.new("TextLabel"); evoTitle.Size=UDim2.new(1,-40,0,28); evoTitle.Position=UDim2.new(0,12,0,6)
+local evoTitle = Instance.new("TextLabel"); evoTitle.Size=UDim2.new(1,-70,0,26); evoTitle.Position=UDim2.new(0,12,0,6)
 evoTitle.BackgroundTransparency=1; evoTitle.Font=Enum.Font.GothamSemibold; evoTitle.TextSize=16; evoTitle.TextXAlignment=Enum.TextXAlignment.Left
-evoTitle.Text="🔧 EVO MANAGER — Submit Held (I/II/III) + Plant (retries)"; evoTitle.TextColor3=Color3.fromRGB(235,235,245); evoTitle.Parent=evoFrame
+evoTitle.Text="🔧 EVO MANAGER — Submit Held (I/II/III) + Plant"; evoTitle.TextColor3=Color3.fromRGB(235,235,245); evoTitle.Parent=evoFrame
+
+-- Bouton "en bulle"
+local toBubbleBtn = Instance.new("TextButton"); toBubbleBtn.Size=UDim2.fromOffset(26,26); toBubbleBtn.Position=UDim2.new(1,-62,0,6)
+toBubbleBtn.BackgroundColor3=Color3.fromRGB(55,55,75); toBubbleBtn.Text="●"; toBubbleBtn.Font=Enum.Font.GothamBold; toBubbleBtn.TextSize=16; toBubbleBtn.TextColor3=Color3.fromRGB(235,235,245); toBubbleBtn.Parent=evoFrame
+rounded(toBubbleBtn,13)
 
 local evoClose = Instance.new("TextButton"); evoClose.Size=UDim2.fromOffset(26,26); evoClose.Position=UDim2.new(1,-34,0,6)
 evoClose.BackgroundColor3=Color3.fromRGB(45,45,55); evoClose.Text="✕"; evoClose.Font=Enum.Font.GothamBold; evoClose.TextSize=14; evoClose.TextColor3=Color3.fromRGB(235,235,245); evoClose.Parent=evoFrame
 rounded(evoClose,0)
 
--- Ligne d’actions (plus de liste cochable)
+-- Ligne d’actions
 local actionsRow = Instance.new("Frame")
-actionsRow.Size = UDim2.new(1, -24, 0, 40)
-actionsRow.Position = UDim2.new(0, 12, 0, 44)
+actionsRow.Size = UDim2.new(1, -24, 0, 36)
+actionsRow.Position = UDim2.new(0, 12, 0, 40)
 actionsRow.BackgroundColor3 = Color3.fromRGB(28,28,34)
 actionsRow.Parent = evoFrame
 rounded(actionsRow, 10)
@@ -1037,10 +1054,10 @@ rescanBtn.BackgroundColor3=Color3.fromRGB(80,85,100); rescanBtn.Text="Rescan Bac
 local submitBtn = Instance.new("TextButton"); submitBtn.Size=UDim2.new(0.48,-6,1,0); submitBtn.Position=UDim2.new(0.52,0,0,4)
 submitBtn.BackgroundColor3=Color3.fromRGB(60,120,255); submitBtn.Text="Submit (Held) I/II/III"; submitBtn.Font=Enum.Font.GothamBold; submitBtn.TextSize=14; submitBtn.TextColor3=Color3.fromRGB(255,255,255); submitBtn.Parent=actionsRow; rounded(submitBtn,8)
 
--- Bouton ARROSAGE 4×
+-- Bouton ARROSAGE 4× (plus proche de la section)
 local water4xBtn = Instance.new("TextButton")
-water4xBtn.Size = UDim2.new(1, -24, 0, 36)
-water4xBtn.Position = UDim2.new(0, 12, 0, 92)
+water4xBtn.Size = UDim2.new(1, -24, 0, 32)
+water4xBtn.Position = UDim2.new(0, 12, 0, 80)
 water4xBtn.BackgroundColor3 = Color3.fromRGB(60, 140, 200)
 water4xBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 water4xBtn.Text = "💦 ARROSER 4 FOIS à ma position (sol)"
@@ -1049,17 +1066,17 @@ water4xBtn.TextSize = 13
 water4xBtn.Parent = evoFrame
 rounded(water4xBtn, 8)
 
--- Section plantation courte
+-- Section plantation compacte
 local plantingSection = Instance.new("Frame")
-plantingSection.Size = UDim2.new(1, -24, 0, 148)
-plantingSection.Position = UDim2.new(0, 12, 0, 136)
+plantingSection.Size = UDim2.new(1, -24, 0, 122) -- << réduit
+plantingSection.Position = UDim2.new(0, 12, 0, 116)
 plantingSection.BackgroundColor3 = Color3.fromRGB(28, 28, 34)
 plantingSection.Parent = evoFrame
 rounded(plantingSection, 10)
 
 local plantingTitle = Instance.new("TextLabel")
-plantingTitle.Size = UDim2.new(1, -16, 0, 20)
-plantingTitle.Position = UDim2.new(0, 8, 0, 8)
+plantingTitle.Size = UDim2.new(1, -16, 0, 18)
+plantingTitle.Position = UDim2.new(0, 8, 0, 6)
 plantingTitle.BackgroundTransparency = 1
 plantingTitle.Font = Enum.Font.GothamSemibold
 plantingTitle.TextSize = 14
@@ -1069,8 +1086,8 @@ plantingTitle.Text = "🌱 ZONE DE PLANTATION"
 plantingTitle.Parent = plantingSection
 
 local posLabel = Instance.new("TextLabel")
-posLabel.Size = UDim2.new(1, -16, 0, 18)
-posLabel.Position = UDim2.new(0, 8, 0, 30)
+posLabel.Size = UDim2.new(1, -16, 0, 16)
+posLabel.Position = UDim2.new(0, 8, 0, 26)
 posLabel.BackgroundTransparency = 1
 posLabel.Font = Enum.Font.Gotham
 posLabel.TextSize = 12
@@ -1080,8 +1097,8 @@ posLabel.Text = "Pos: (…)"
 posLabel.Parent = plantingSection
 
 local plantingButtonsContainer = Instance.new("Frame")
-plantingButtonsContainer.Size = UDim2.new(1, -16, 0, 36)
-plantingButtonsContainer.Position = UDim2.new(0, 8, 0, 52)
+plantingButtonsContainer.Size = UDim2.new(1, -16, 0, 28)
+plantingButtonsContainer.Position = UDim2.new(0, 8, 0, 44)
 plantingButtonsContainer.BackgroundTransparency = 1
 plantingButtonsContainer.Parent = plantingSection
 
@@ -1107,17 +1124,17 @@ plantMushroomBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 plantMushroomBtn.Parent = plantingButtonsContainer
 rounded(plantMushroomBtn, 8)
 
--- Récap (sans bouton Export)
+-- Récap (resserré)
 local recapSection = Instance.new("Frame")
-recapSection.Size = UDim2.new(1, -16, 0, 40)
-recapSection.Position = UDim2.new(0, 8, 0, 96)
+recapSection.Size = UDim2.new(1, -16, 0, 32)
+recapSection.Position = UDim2.new(0, 8, 0, 74)
 recapSection.BackgroundColor3 = Color3.fromRGB(32, 32, 38)
 recapSection.Parent = plantingSection
 rounded(recapSection, 8)
 
 local recapTitle = Instance.new("TextLabel")
-recapTitle.Size = UDim2.new(1, -8, 0, 18)
-recapTitle.Position = UDim2.new(0, 4, 0, 4)
+recapTitle.Size = UDim2.new(1, -8, 0, 14)
+recapTitle.Position = UDim2.new(0, 4, 0, 3)
 recapTitle.BackgroundTransparency = 1
 recapTitle.Font = Enum.Font.GothamSemibold
 recapTitle.TextSize = 12
@@ -1127,8 +1144,8 @@ recapTitle.Text = "📋 Récap non plantés (hors IV) :"
 recapTitle.Parent = recapSection
 
 local recapFrame = Instance.new("ScrollingFrame")
-recapFrame.Size = UDim2.new(1, -8, 0, 18)
-recapFrame.Position = UDim2.new(0, 4, 0, 22)
+recapFrame.Size = UDim2.new(1, -8, 0, 14)
+recapFrame.Position = UDim2.new(0, 4, 0, 18)
 recapFrame.BackgroundTransparency = 1
 recapFrame.ScrollBarThickness = 4
 recapFrame.Parent = recapSection
@@ -1136,16 +1153,17 @@ local recapList = Instance.new("UIListLayout")
 recapList.Parent = recapFrame
 recapList.Padding = UDim.new(0, 2)
 
+-- Status COLLÉ sous le récap (fini le grand espace)
 local statusLbl = Instance.new("TextLabel")
-statusLbl.Size = UDim2.new(1, -24, 0, 24)
-statusLbl.Position = UDim2.new(0, 12, 1, -30)
+statusLbl.Size = UDim2.new(1, -16, 0, 16)
+statusLbl.Position = UDim2.new(0, 8, 0, 106) -- 74 + 32 (recap) = 106
 statusLbl.BackgroundTransparency = 1
 statusLbl.Font = Enum.Font.Gotham
-statusLbl.TextSize = 14
+statusLbl.TextSize = 12
 statusLbl.TextXAlignment = Enum.TextXAlignment.Left
 statusLbl.TextColor3 = Color3.fromRGB(200, 200, 210)
 statusLbl.Text = "Prêt."
-statusLbl.Parent = evoFrame
+statusLbl.Parent = plantingSection
 
 local function flash(frame, fromRGB, toRGB)
 	frame.BackgroundColor3 = Color3.fromRGB(fromRGB[1],fromRGB[2],fromRGB[3])
@@ -1161,13 +1179,13 @@ end
 local function setRecap(items)
 	clearRecap()
 	if #items == 0 then
-		local lbl = Instance.new("TextLabel"); lbl.Size = UDim2.new(1, 0, 0, 18); lbl.BackgroundTransparency = 1
-		lbl.Font = Enum.Font.Gotham; lbl.TextSize = 13; lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.TextColor3 = Color3.fromRGB(200,210,220)
+		local lbl = Instance.new("TextLabel"); lbl.Size = UDim2.new(1, 0, 0, 14); lbl.BackgroundTransparency = 1
+		lbl.Font = Enum.Font.Gotham; lbl.TextSize = 12; lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.TextColor3 = Color3.fromRGB(200,210,220)
 		lbl.Text = "Tout planté ✅"; lbl.Parent = recapFrame; return
 	end
 	for _,it in ipairs(items) do
-		local row = Instance.new("TextLabel"); row.Size = UDim2.new(1, 0, 0, 18); row.BackgroundTransparency = 1
-		row.Font = Enum.Font.Gotham; row.TextSize = 13; row.TextXAlignment = Enum.TextXAlignment.Left; row.TextColor3 = Color3.fromRGB(220,200,200)
+		local row = Instance.new("TextLabel"); row.Size = UDim2.new(1, 0, 0, 14); row.BackgroundTransparency = 1
+		row.Font = Enum.Font.Gotham; row.TextSize = 12; row.TextXAlignment = Enum.TextXAlignment.Left; row.TextColor3 = Color3.fromRGB(220,200,200)
 		row.Text = string.format("%s — restants: %d", it.evoName, it.count); row.Parent = recapFrame
 	end
 end
@@ -1316,7 +1334,6 @@ local function processPlantMushroomSeeds()
 	while pass < maxPasses do
 		pass += 1
 		local passProgress = 0
-		-- Regénère la liste courante
 		local groups = {}
 		for _, obj in ipairs(backpack:GetChildren()) do
 			if isEvoSeedTool(obj) then
@@ -1361,7 +1378,7 @@ local function processPlantMushroomSeeds()
 						if delta > 0 then
 							plantedThis += delta; totalPlanted += delta; passProgress += delta; noProgressStreak = 0; remaining = after
 							statusLbl.Text = string.format("%s — plantés: %d | reste: %d", evoName, plantedThis, remaining)
-					else noProgressStreak += 1; remaining = after end
+						else noProgressStreak += 1; remaining = after end
 					else
 						if perr == "IV filtered" then statusLbl.Text = string.format("%s — IV détectée, skip. Reste %d.", evoName, remaining); break end
 						noProgressStreak += 1
@@ -1384,15 +1401,41 @@ local function processPlantMushroomSeeds()
 	flash(evoFrame, {30, 80, 30}, {24, 24, 28})
 end
 
+-- Toggle EVO
+local function toggleEvo()
+	evoFrame.Visible = not evoFrame.Visible
+	if evoFrame.Visible then
+		bubbleBtn.Visible = false
+		clampOnScreen(evoFrame)
+	end
+end
+
+-- Switch en bulle
+local function showBubble()
+	evoFrame.Visible = false
+	bubbleBtn.Visible = true
+	clampOnScreen(bubbleBtn)
+end
+
 -- Wire EVO MANAGER + raccourcis
-local function toggleEvo() evoFrame.Visible = not evoFrame.Visible; if evoFrame.Visible then clampOnScreen(evoFrame) end end
 evoClose.MouseButton1Click:Connect(function() evoFrame.Visible=false end)
+toBubbleBtn.MouseButton1Click:Connect(showBubble)
+bubbleBtn.InputBegan:Connect(function(i)
+	if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
+		bubbleBtn.Visible=false
+		evoFrame.Visible=true
+		clampOnScreen(evoFrame)
+	end
+end)
+
 quickEvoBtn.MouseButton1Click:Connect(toggleEvo)
 evoManagerBtn.MouseButton1Click:Connect(toggleEvo)
 UserInputService.InputBegan:Connect(function(input, gp)
 	if gp then return end
 	if input.KeyCode == Enum.KeyCode.E and (UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt) or UserInputService:IsKeyDown(Enum.KeyCode.RightAlt)) then
 		toggleEvo()
+	elseif input.KeyCode == Enum.KeyCode.B and (UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt) or UserInputService:IsKeyDown(Enum.KeyCode.RightAlt)) then
+		if evoFrame.Visible then showBubble() else bubbleBtn.Visible=false; evoFrame.Visible=true; clampOnScreen(evoFrame) end
 	end
 end)
 
@@ -1492,4 +1535,4 @@ player.CharacterAdded:Connect(function(char)
 	if isNoclipping then task.wait(0.2); toggleNoclip(nil); toggleNoclip(nil) end
 end)
 
-msg("✅ Saad helper pack chargé — EVO MANAGER compact (Alt+E / bouton EVO). Tous EVO I/II/III inclus par défaut (IV exclus), récap simplifié, drag mobile OK, arrosage 4×, Anti-AFK Ready.", Color3.fromRGB(170,230,255))
+msg("✅ Saad helper pack chargé — EVO MANAGER compact+bulle (Alt+E / bouton EVO, ● ou Alt+B pour bulle). I/II/III inclus (IV exclus), récap resserré, arrosage 4×, Anti-AFK Ready.", Color3.fromRGB(170,230,255))
