@@ -45,7 +45,7 @@ local SEEDS = {
 	"Carrot","Strawberry","Blueberry","Orange Tulip","Tomato","Corn","Daffodil","Watermelon",
 	"Pumpkin","Apple","Bamboo","Coconut","Cactus","Dragon Fruit","Mango","Grape","Mushroom",
 	"Pepper","Cacao","Beanstalk","Ember Lily","Sugar Apple","Burning Bud","Giant Pinecone",
-	"Elder Strawberry","Romanesco","Crimson Thron"
+	"Elder Strawberry","Romanesco","Crimson Thorn"
 }
 local GEARS = {
 	"Watering Can","Trading Ticket","Trowel","Recall Wrench","Basic Sprinkler","Advanced Sprinkler",
