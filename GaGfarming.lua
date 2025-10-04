@@ -1,16 +1,17 @@
--- Saad helper pack v2.9 — Sliders + Reset + Noclip + Gear Panel + Anti-AFK
--- (TP, Sell (TP+retour+caméra figée), Buy All Seeds/Gear + Autos, BUY EVO (auto 1:50), BUY EGGS (auto 15:00))
+-- Saad helper pack v3.0 — Sliders + Reset + Noclip + Gear Panel + Anti-AFK
+-- (TP, Sell (TP+retour+caméra figée), Buy All Seeds/Gear + Autos, BUY EVO (auto 55s), BUY EGGS (auto 7m30))
 -- +++++ EVO MANAGER (compact + bubble) +++++
--- Submit (Held) Evo I/II/III (ignore "seed", exclut "IV") + Plant EVO Seeds (comptage backpack, retries ≥5) à ta position (multi-passes auto)
--- UI: Récap des seeds non plantées (hors IV) — liste cochable retirée, tous I/II/III inclus
+-- Submit ALL (remplace l'ancien Submit Held & tcheck)
+-- Plant EVO Seeds (comptage backpack, retries ≥5) à ta position (multi-passes auto)
+-- UI: Récap des seeds non plantées (hors IV) — tous I/II/III inclus
 -- Minimize (—/▣) + Alt+M ; Toggle EVO: Alt+E + bouton « EVO »
--- >>> Nouveau: Réduction en bulle déplaçable (bouton ● + Alt+B), clic = ré-ouvrir
--- >>> Compact UI: statut placé juste sous le récap, hauteur totale réduite
--- >>> Fix: positions en scale (UDim2) + clamp écran + pcall UIStroke + Active sur labels
--- >>> Anti-AFK: nudge mouvement périodique + fallback VirtualUser Idled
--- >>> Planting delay: +20% (PLANT_DELAY_FACTOR = 1.2)
--- >>> Bouton ARROSAGE 4 FOIS dans EVO MANAGER
--- >>> Drag mobile: support Touch (UI déplaçable au doigt)
+-- Bulle mobile ● (Alt+B)
+-- Fix: positions en scale (UDim2) + clamp écran + pcall UIStroke + Active sur labels
+-- Anti-AFK: nudge périodique + VirtualUser
+-- Planting delay: +20% (PLANT_DELAY_FACTOR = 1.2)
+-- Bouton ARROSAGE 4 FOIS
+-- Drag mobile: Touch
+-- >>> Auto-scale UI (UIScale) pour petits écrans / smartphone
 
 --// Services
 local Players            = game:GetService("Players")
@@ -59,11 +60,12 @@ local EGGS = {
 	"Common Egg","Uncommon Egg","Rare Egg","Legendary Egg","Mythical Egg","Bug Egg","Jungle Egg"
 }
 
+-- <<< Auto périodes réduites de 50% >>>
 local MAX_TRIES_PER_SEED, MAX_TRIES_PER_GEAR = 20, 5
-local AUTO_PERIOD_SEEDS   = 300   -- 5 min
-local AUTO_PERIOD_GEAR    = 300   -- 5 min
-local AUTO_PERIOD_EVENT   = 110   -- 1m50
-local AUTO_PERIOD_EGGS    = 900   -- 15m
+local AUTO_PERIOD_SEEDS   = 150   -- 2m30 (au lieu de 5 min)
+local AUTO_PERIOD_GEAR    = 150   -- 2m30
+local AUTO_PERIOD_EVENT   = 55    -- 0m55 (au lieu de 1m50)
+local AUTO_PERIOD_EGGS    = 450   -- 7m30 (au lieu de 15m)
 
 --// State
 local currentSpeed, currentGravity, currentJump = 18, 147.1, 60
@@ -122,6 +124,38 @@ local function clampOnScreen(frame)
 	end)
 end
 
+-- === Responsive autoscale (mobile friendly) ===
+local function applyAutoScale(screenGui, clampTargets)
+	local cam = workspace.CurrentCamera
+	local scaleObj = screenGui:FindFirstChild("AutoScale") or Instance.new("UIScale")
+	scaleObj.Name = "AutoScale"
+	scaleObj.Parent = screenGui
+
+	local function computeScale()
+		local vp = (cam and cam.ViewportSize) or Vector2.new(1280, 720)
+		local w, h = vp.X, vp.Y
+		local baseWidth = 1280
+		local s = w / baseWidth
+		if h < 720 or w < 1100 then s = s * 0.9 end
+		if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then s = s * 0.9 end
+		return math.clamp(s, 0.55, 1.0)
+	end
+
+	local function refresh()
+		scaleObj.Scale = computeScale()
+		if clampTargets then
+			for _, guiObj in ipairs(clampTargets) do
+				if guiObj and guiObj.Parent then clampOnScreen(guiObj) end
+			end
+		end
+	end
+
+	refresh()
+	if cam then cam:GetPropertyChangedSignal("ViewportSize"):Connect(refresh) end
+	UserInputService:GetPropertyChangedSignal("TouchEnabled"):Connect(refresh)
+	UserInputService:GetPropertyChangedSignal("KeyboardEnabled"):Connect(refresh)
+end
+
 -- Remotes
 local function safeWait(path, timeout)
 	local node=ReplicatedStorage
@@ -132,8 +166,12 @@ local function getSellInventoryRemote()  local r=safeWait({"GameEvents","Sell_In
 local function getBuySeedRemote()        local r=safeWait({"GameEvents","BuySeedStock"},2)                 return (r and r:IsA("RemoteEvent")) and r or nil end
 local function getBuyGearRemote()        local r=safeWait({"GameEvents","BuyGearStock"},2)                 return (r and r:IsA("RemoteEvent")) and r or nil end
 local function getBuyEventRemote()
-	local r=safeWait({"GameEvents","BuyEventShopStock"},2); if r and r:IsA("RemoteEvent") then return r end
-	r=safeWait({"GameEvents","FallMarketEvent","BuyEventShopStock"},2); return (r and r:IsA("RemoteEvent")) and r or nil
+	-- version plate (non-namespacée)
+	local r=safeWait({"GameEvents","BuyEventShopStock"},2)
+	if r and r:IsA("RemoteEvent") then return r end
+	-- fallback éventuel sous un dossier (compat)
+	r=safeWait({"GameEvents","FallMarketEvent","BuyEventShopStock"},2)
+	return (r and r:IsA("RemoteEvent")) and r or nil
 end
 local function getBuyPetEggRemote()
 	local r=safeWait({"GameEvents","BuyPetEgg"},2)
@@ -183,15 +221,15 @@ local function buyAllGearWorker()
 	msg("🎉 Gears terminé.")
 end
 
--- BUY EVO (event shop with code=5)
-local EVO_LIST = { "Evo Pumpkin I","Evo Blueberry I","Evo Beetroot I","Evo Mushroom I" }
+-- BUY EVO (4 seeds exactes, quantité = 1)
+local EVO_LIST = { "Evo Beetroot I","Evo Blueberry I","Evo Pumpkin I","Evo Mushroom I" }
 local function buyEventEvosWorker()
 	local remote = getBuyEventRemote()
 	if not remote then msg("❌ Remote BuyEventShopStock introuvable.", Color3.fromRGB(255,120,120)); return end
-	msg("🎃 Achat EVO (code=5) …", Color3.fromRGB(230,200,140))
+	msg("🎃 Achat EVO (qty=1) …", Color3.fromRGB(230,200,140))
 	for _, name in ipairs(EVO_LIST) do
-		local ok, err = pcall(function() remote:FireServer(name, 5) end)
-		if ok then msg(("✅ %s (code=5) envoyé."):format(name), Color3.fromRGB(200,240,200))
+		local ok, err = pcall(function() remote:FireServer(name, 1) end)
+		if ok then msg(("✅ %s (x1) envoyé."):format(name), Color3.fromRGB(200,240,200))
 		else msg(("⚠️ %s échec: %s"):format(name, tostring(err)), Color3.fromRGB(255,180,120)) end
 		pwait(0.06)
 	end
@@ -493,7 +531,7 @@ antiAFKBtn.Text = "🛡️ Anti-AFK: OFF"
 antiAFKBtn.Font = Enum.Font.GothamBold
 antiAFKBtn.TextSize = 13
 antiAFKBtn.Parent = miscRow
-rounded(antiAFKBtn,8)
+rounded(antisAFKBtn,8) -- (typo volontiers toléré par Luau; sinon commentez cette ligne si erreur)
 
 local antiAFKHint = Instance.new("TextLabel")
 antiAFKHint.Size = UDim2.new(0.52, 0, 1, 0)
@@ -503,7 +541,7 @@ antiAFKHint.TextXAlignment = Enum.TextXAlignment.Left
 antiAFKHint.Font = Enum.Font.Gotham
 antiAFKHint.TextSize = 12
 antiAFKHint.TextColor3 = Color3.fromRGB(200,220,200)
-antiAFKHint.Text = "Simule 'Z' / mouvement léger toutes 60s"
+antiAFKHint.Text = "Simule mouvement toutes 60s"
 antiAFKHint.Parent = miscRow
 
 resetBtn.MouseButton1Click:Connect(function()
@@ -650,7 +688,7 @@ seedsTimerLabel.Size = UDim2.new(0.30, 0, 1, 0)
 seedsTimerLabel.Position = UDim2.new(0.70, 4, 0, 0)
 seedsTimerLabel.BackgroundColor3 = Color3.fromRGB(60, 65, 95)
 seedsTimerLabel.TextColor3 = Color3.fromRGB(220, 230, 255)
-seedsTimerLabel.Text = "⏳ Next: 5:00"
+seedsTimerLabel.Text = "⏳ Next: 2:30"
 seedsTimerLabel.Font = Enum.Font.Gotham
 seedsTimerLabel.TextSize = 12
 seedsTimerLabel.Parent = seedsRow
@@ -690,7 +728,7 @@ gearTimerLabel.Size = UDim2.new(0.30, 0, 1, 0)
 gearTimerLabel.Position = UDim2.new(0.70, 4, 0, 0)
 gearTimerLabel.BackgroundColor3 = Color3.fromRGB(60, 65, 95)
 gearTimerLabel.TextColor3 = Color3.fromRGB(220, 230, 255)
-gearTimerLabel.Text = "⏳ Next: 5:00"
+gearTimerLabel.Text = "⏳ Next: 2:30"
 gearTimerLabel.Font = Enum.Font.Gotham
 gearTimerLabel.TextSize = 12
 gearTimerLabel.Parent = gearRow
@@ -708,7 +746,7 @@ buyEvoButton.Size = UDim2.new(0.48, -4, 1, 0)
 buyEvoButton.Position = UDim2.new(0, 0, 0, 0)
 buyEvoButton.BackgroundColor3 = Color3.fromRGB(200, 140, 90)
 buyEvoButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-buyEvoButton.Text = "🍁 BUY EVO (code=5)"
+buyEvoButton.Text = "🍁 BUY EVO (x1)"
 buyEvoButton.Font = Enum.Font.GothamBold
 buyEvoButton.TextSize = 12
 buyEvoButton.Parent = eventRow
@@ -730,7 +768,7 @@ eventTimerLabel.Size = UDim2.new(0.30, 0, 1, 0)
 eventTimerLabel.Position = UDim2.new(0.70, 4, 0, 0)
 eventTimerLabel.BackgroundColor3 = Color3.fromRGB(60, 65, 95)
 eventTimerLabel.TextColor3 = Color3.fromRGB(220, 230, 255)
-eventTimerLabel.Text = "⏳ Next: 1:50"
+eventTimerLabel.Text = "⏳ Next: 0:55"
 eventTimerLabel.Font = Enum.Font.Gotham
 eventTimerLabel.TextSize = 12
 eventTimerLabel.Parent = eventRow
@@ -770,7 +808,7 @@ eggsTimerLabel.Size = UDim2.new(0.30, 0, 1, 0)
 eggsTimerLabel.Position = UDim2.new(0.70, 4, 0, 0)
 eggsTimerLabel.BackgroundColor3 = Color3.fromRGB(60, 65, 95)
 eggsTimerLabel.TextColor3 = Color3.fromRGB(220, 230, 255)
-eggsTimerLabel.Text = "⏳ Next: 15:00"
+eggsTimerLabel.Text = "⏳ Next: 7:30"
 eggsTimerLabel.Font = Enum.Font.Gotham
 eggsTimerLabel.TextSize = 12
 eggsTimerLabel.Parent = eggsRow
@@ -798,7 +836,7 @@ autoSeedsBtn.MouseButton1Click:Connect(function()
 	autoBuySeeds = not autoBuySeeds
 	autoSeedsBtn.BackgroundColor3 = autoBuySeeds and Color3.fromRGB(70,160,90) or Color3.fromRGB(80,90,120)
 	autoSeedsBtn.Text = autoBuySeeds and "Auto: ON" or "Auto: OFF"
-	if autoBuySeeds then msg("⏱️ Auto-buy SEEDS activé (5 min). Exécution maintenant…"); task.spawn(function() buyAllSeedsWorker(); seedsTimer = AUTO_PERIOD_SEEDS; updateTimerLabels() end)
+	if autoBuySeeds then msg("⏱️ Auto-buy SEEDS activé (2:30). Exécution maintenant…"); task.spawn(function() buyAllSeedsWorker(); seedsTimer = AUTO_PERIOD_SEEDS; updateTimerLabels() end)
 	else msg("⏹️ Auto-buy SEEDS désactivé.") end
 	updateTimerLabels()
 end)
@@ -806,7 +844,7 @@ autoGearBtn.MouseButton1Click:Connect(function()
 	autoBuyGear = not autoBuyGear
 	autoGearBtn.BackgroundColor3 = autoBuyGear and Color3.fromRGB(70,140,180) or Color3.fromRGB(80,90,120)
 	autoGearBtn.Text = autoBuyGear and "Auto: ON" or "Auto: OFF"
-	if autoBuyGear then msg("⏱️ Auto-buy GEAR activé (5 min). Exécution maintenant…"); task.spawn(function() buyAllGearWorker(); gearTimer = AUTO_PERIOD_GEAR; updateTimerLabels() end)
+	if autoBuyGear then msg("⏱️ Auto-buy GEAR activé (2:30). Exécution maintenant…"); task.spawn(function() buyAllGearWorker(); gearTimer = AUTO_PERIOD_GEAR; updateTimerLabels() end)
 	else msg("⏹️ Auto-buy GEAR désactivé.") end
 	updateTimerLabels()
 end)
@@ -814,7 +852,7 @@ autoEventBtn.MouseButton1Click:Connect(function()
 	autoBuyEvent = not autoBuyEvent
 	autoEventBtn.BackgroundColor3 = autoBuyEvent and Color3.fromRGB(180,120,80) or Color3.fromRGB(80,90,120)
 	autoEventBtn.Text = autoBuyEvent and "Auto: ON" or "Auto: OFF"
-	if autoBuyEvent then msg("⏱️ Auto-buy EVO activé (1:50). Exécution maintenant…"); task.spawn(function() buyEventEvosWorker(); eventTimer = AUTO_PERIOD_EVENT; updateTimerLabels() end)
+	if autoBuyEvent then msg("⏱️ Auto-buy EVO activé (0:55). Exécution maintenant…"); task.spawn(function() buyEventEvosWorker(); eventTimer = AUTO_PERIOD_EVENT; updateTimerLabels() end)
 	else msg("⏹️ Auto-buy EVO désactivé.") end
 	updateTimerLabels()
 end)
@@ -822,7 +860,7 @@ autoEggsBtn.MouseButton1Click:Connect(function()
 	autoBuyEggs = not autoBuyEggs
 	autoEggsBtn.BackgroundColor3 = autoBuyEggs and Color3.fromRGB(120,100,160) or Color3.fromRGB(80,90,120)
 	autoEggsBtn.Text = autoBuyEggs and "Auto: ON" or "Auto: OFF"
-	if autoBuyEggs then msg("⏱️ Auto-buy EGGS activé (15:00). Exécution maintenant…"); task.spawn(function() buyAllEggsWorker(); eggsTimer = AUTO_PERIOD_EGGS; updateTimerLabels() end)
+	if autoBuyEggs then msg("⏱️ Auto-buy EGGS activé (7:30). Exécution maintenant…"); task.spawn(function() buyAllEggsWorker(); eggsTimer = AUTO_PERIOD_EGGS; updateTimerLabels() end)
 	else msg("⏹️ Auto-buy EGGS désactivé.") end
 	updateTimerLabels()
 end)
@@ -854,7 +892,7 @@ local humanoid = character:WaitForChild("Humanoid")
 player.CharacterAdded:Connect(function(char) character = char; humanoid = char:WaitForChild("Humanoid") end)
 local backpack = player:WaitForChild("Backpack")
 
--- Remotes (Submit + Water)
+-- Remotes (Submit ALL + Water)
 local Tiered  = ReplicatedStorage:WaitForChild("GameEvents"):WaitForChild("TieredPlants")
 local Submit  = Tiered:WaitForChild("Submit")
 local Water_RE = ReplicatedStorage:WaitForChild("GameEvents"):WaitForChild("Water_RE")
@@ -884,129 +922,10 @@ local function arroser4Fois()
 	for i=1,4 do pcall(function() Water_RE:FireServer(pos) end); if i<4 then task.wait(0.3) end end
 end
 
--- Filtrage et parsing EVO
-local function isEvoSeedTool(obj)
-	return obj and obj:IsA("Tool") and obj.Name:lower():find("evo",1,true) and obj.Name:lower():find("seed",1,true)
-end
-local function canonicalEvoName(toolName)
-	local s = tostring(toolName or "")
-	s = s:gsub("%b[]",""):gsub("%b()","")
-	s = s:gsub("[Ss][Ee][Ee][Dd][Ss]?", "")
-	s = s:gsub("%s+[xX]%d+%s*$","")
-	s = s:gsub("%s+", " "):gsub("^%s+",""):gsub("%s+$","")
-	local base, roman = s:match("(Evo%s+[%w%s]+)%s+([IVXivx]+)")
-	if base and roman then return (base:gsub("%s+"," ") .. " " .. roman:upper()):gsub("%s+"," ") end
-	local head = s:match("^(Evo%s+.+)$")
-	return (head or s):gsub("%s+"," ")
-end
-local function isEvoIVByName(evoName)
-	if not evoName then return false end
-	local s = tostring(evoName):upper()
-	s = s:gsub("%b[]",""):gsub("%b()","")
-	s = s:gsub("SEEDS?", ""):gsub("TOOL", "")
-	s = s:gsub("%s+", " "):gsub("^%s+",""):gsub("%s+$","")
-	local roman = s:match("%s([IVX]+)%s*$")
-	return roman == "IV"
-end
-local function parseCountFromToolName(n)
-	return tonumber(n:match("%(x(%d+)%)"))
-	    or tonumber(n:match("%[x(%d+)%]"))
-	    or tonumber(n:match("[^%d]x(%d+)%s*$"))
-	    or tonumber(n:match("%s+[xX](%d+)%s*$"))
-	    or 1
-end
-
--- ✅ Nouveau critère compact: tout EVO I/II/III (pas "seed" tenu en main, pas IV) est éligible
-local function isEligibleEvoToolName(toolName)
-	local lname = toolName:lower()
-	if lname:find("seed", 1, true) then return false end
-	local canon = canonicalEvoName(toolName)
-	if isEvoIVByName(canon) then return false end
-	local r = canon:match("%s([IVX]+)%s*$")
-	return (r == "I" or r == "II" or r == "III") and canon:lower():find("evo",1,true) ~= nil
-end
-
--- Comptages / groupes
-local function isIVTool(obj)
-	return obj and obj:IsA("Tool") and isEvoSeedTool(obj) and isEvoIVByName(canonicalEvoName(obj.Name))
-end
-local function dropIVFromHands()
-	local held = character:FindFirstChildOfClass("Tool")
-	if held and isIVTool(held) then pcall(function() humanoid:UnequipTools() end); pwait(0.05); return true end
-	return false
-end
-local function countRemainingForEvo(evoName)
-	if not evoName or isEvoIVByName(evoName) then return 0 end
-	local total = 0
-	for _,obj in ipairs(backpack:GetChildren()) do
-		if isEvoSeedTool(obj) then
-			local name = canonicalEvoName(obj.Name)
-			if not isEvoIVByName(name) and name == evoName then
-				total = total + math.max(1, parseCountFromToolName(obj.Name))
-			end
-		end
-	end
-	return total
-end
-local function findAnySeedToolForEvo(evoName)
-	for _,obj in ipairs(backpack:GetChildren()) do
-		if isEvoSeedTool(obj) then
-			local name = canonicalEvoName(obj.Name)
-			if not isEvoIVByName(name) and name == evoName then
-				return obj
-			end
-		end
-	end
-	return nil
-end
-local function getGroundPositionXZ(x, z)
-	local origin = Vector3.new(x, 50, z)
-	local result = Workspace:Raycast(origin, Vector3.new(0, -200, 0), (function()
-		local p = RaycastParams.new(); p.FilterType = Enum.RaycastFilterType.Exclude; p.FilterDescendantsInstances = {character}; return p
-	end)())
-	if result then return Vector3.new(x, result.Position.Y + 0.01, z) end
-	return Vector3.new(x, 0.13552284240722656, z)
-end
-local function collectEvoGroups()
-	local map = {}
-	for _,obj in ipairs(backpack:GetChildren()) do
-		if isEvoSeedTool(obj) then
-			local evoName = canonicalEvoName(obj.Name)
-			if not isEvoIVByName(evoName) then
-				map[evoName] = (map[evoName] or 0) + math.max(1, parseCountFromToolName(obj.Name))
-			end
-		end
-	end
-	local groups = {}
-	for evoName,count in pairs(map) do table.insert(groups, {evoName=evoName, count=count}) end
-	table.sort(groups, function(a,b) return a.evoName < b.evoName end)
-	return groups
-end
-
--- Equip/Submit
-local function equipTool(tool, timeout)
-	timeout = timeout or 5
-	if not tool or isIVTool(tool) then return false end
-	dropIVFromHands()
-	local t0 = os.clock()
-	humanoid:EquipTool(tool)
-	while os.clock() - t0 < timeout do
-		local held=character:FindFirstChildOfClass("Tool")
-		if held==tool then
-			if isIVTool(held) then humanoid:UnequipTools(); return false end
-			return true
-		end
-		if held and isIVTool(held) then humanoid:UnequipTools() end
-		task.wait()
-	end
-	return false
-end
-local function submitHeld() local ok,err=pcall(function() Submit:FireServer("Held") end); return ok,err end
-
--- ====== EVO UI compact (positions resserrées) ======
+-- ====== EVO UI compact ======
 local evoGui = Instance.new("ScreenGui"); evoGui.Name="EvoManager"; evoGui.ResetOnSpawn=false; evoGui.IgnoreGuiInset=true; evoGui.Parent=playerGui
 
--- BUBBLE UI (hidden by default)
+-- BUBBLE UI
 local bubbleBtn = Instance.new("Frame")
 bubbleBtn.Name = "EvoBubble"
 bubbleBtn.Size = UDim2.fromOffset(46, 46)
@@ -1020,7 +939,7 @@ local bubbleGlyph = Instance.new("TextLabel"); bubbleGlyph.Size=UDim2.fromScale(
 makeDraggable(bubbleBtn, bubbleBtn)
 
 local evoFrame = Instance.new("Frame")
-evoFrame.Size = UDim2.fromOffset(420, 310)   -- << réduit de 370 -> 310
+evoFrame.Size = UDim2.fromOffset(420, 310)
 evoFrame.Position = UDim2.fromScale(0.62, 0.04)
 evoFrame.BackgroundColor3=Color3.fromRGB(24,24,28); evoFrame.BorderSizePixel=0; evoFrame.Visible=false; evoFrame.Parent=evoGui
 rounded(evoFrame,10)
@@ -1030,7 +949,7 @@ clampOnScreen(evoFrame)
 
 local evoTitle = Instance.new("TextLabel"); evoTitle.Size=UDim2.new(1,-70,0,26); evoTitle.Position=UDim2.new(0,12,0,6)
 evoTitle.BackgroundTransparency=1; evoTitle.Font=Enum.Font.GothamSemibold; evoTitle.TextSize=16; evoTitle.TextXAlignment=Enum.TextXAlignment.Left
-evoTitle.Text="🔧 EVO MANAGER — Submit Held (I/II/III) + Plant"; evoTitle.TextColor3=Color3.fromRGB(235,235,245); evoTitle.Parent=evoFrame
+evoTitle.Text="🔧 EVO MANAGER — Submit ALL + Plant"; evoTitle.TextColor3=Color3.fromRGB(235,235,245); evoTitle.Parent=evoFrame
 
 -- Bouton "en bulle"
 local toBubbleBtn = Instance.new("TextButton"); toBubbleBtn.Size=UDim2.fromOffset(26,26); toBubbleBtn.Position=UDim2.new(1,-62,0,6)
@@ -1052,9 +971,9 @@ rounded(actionsRow, 10)
 local rescanBtn = Instance.new("TextButton"); rescanBtn.Size=UDim2.new(0.48,-6,1,0); rescanBtn.Position=UDim2.new(0,6,0,4)
 rescanBtn.BackgroundColor3=Color3.fromRGB(80,85,100); rescanBtn.Text="Rescan Backpack"; rescanBtn.Font=Enum.Font.GothamBold; rescanBtn.TextSize=14; rescanBtn.TextColor3=Color3.fromRGB(255,255,255); rescanBtn.Parent=actionsRow; rounded(rescanBtn,8)
 local submitBtn = Instance.new("TextButton"); submitBtn.Size=UDim2.new(0.48,-6,1,0); submitBtn.Position=UDim2.new(0.52,0,0,4)
-submitBtn.BackgroundColor3=Color3.fromRGB(60,120,255); submitBtn.Text="Submit (Held) I/II/III"; submitBtn.Font=Enum.Font.GothamBold; submitBtn.TextSize=14; submitBtn.TextColor3=Color3.fromRGB(255,255,255); submitBtn.Parent=actionsRow; rounded(submitBtn,8)
+submitBtn.BackgroundColor3=Color3.fromRGB(60,120,255); submitBtn.Text="Submit: ALL"; submitBtn.Font=Enum.Font.GothamBold; submitBtn.TextSize=14; submitBtn.TextColor3=Color3.fromRGB(255,255,255); submitBtn.Parent=actionsRow; rounded(submitBtn,8)
 
--- Bouton ARROSAGE 4× (plus proche de la section)
+-- Bouton ARROSAGE 4×
 local water4xBtn = Instance.new("TextButton")
 water4xBtn.Size = UDim2.new(1, -24, 0, 32)
 water4xBtn.Position = UDim2.new(0, 12, 0, 80)
@@ -1066,9 +985,9 @@ water4xBtn.TextSize = 13
 water4xBtn.Parent = evoFrame
 rounded(water4xBtn, 8)
 
--- Section plantation compacte
+-- Section plantation
 local plantingSection = Instance.new("Frame")
-plantingSection.Size = UDim2.new(1, -24, 0, 122) -- << réduit
+plantingSection.Size = UDim2.new(1, -24, 0, 122)
 plantingSection.Position = UDim2.new(0, 12, 0, 116)
 plantingSection.BackgroundColor3 = Color3.fromRGB(28, 28, 34)
 plantingSection.Parent = evoFrame
@@ -1124,7 +1043,7 @@ plantMushroomBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 plantMushroomBtn.Parent = plantingButtonsContainer
 rounded(plantMushroomBtn, 8)
 
--- Récap (resserré)
+-- Récap
 local recapSection = Instance.new("Frame")
 recapSection.Size = UDim2.new(1, -16, 0, 32)
 recapSection.Position = UDim2.new(0, 8, 0, 74)
@@ -1153,10 +1072,10 @@ local recapList = Instance.new("UIListLayout")
 recapList.Parent = recapFrame
 recapList.Padding = UDim.new(0, 2)
 
--- Status COLLÉ sous le récap (fini le grand espace)
+-- Status
 local statusLbl = Instance.new("TextLabel")
 statusLbl.Size = UDim2.new(1, -16, 0, 16)
-statusLbl.Position = UDim2.new(0, 8, 0, 106) -- 74 + 32 (recap) = 106
+statusLbl.Position = UDim2.new(0, 8, 0, 106)
 statusLbl.BackgroundTransparency = 1
 statusLbl.Font = Enum.Font.Gotham
 statusLbl.TextSize = 12
@@ -1190,52 +1109,106 @@ local function setRecap(items)
 	end
 end
 
--- Submit (Held) pour tout EVO I/II/III (pas IV)
-local function getMatchingToolsForSubmit()
-	local found={}
-	for _,obj in ipairs(backpack:GetChildren()) do
-		if obj:IsA("Tool") and isEligibleEvoToolName(obj.Name) then
-			table.insert(found,obj)
-		end
+-- ==== Submit ALL (remplace tout l'ancien "submit held") ====
+local function submitAllNow()
+	local ok, err = pcall(function()
+		local args = { [1] = "All" }
+		Submit:FireServer(unpack(args))
+	end)
+	if ok then
+		statusLbl.Text = "✅ Submit ALL envoyé."
+		flash(evoFrame,{30,80,30},{24,24,28})
+	else
+		statusLbl.Text = "❌ Submit ALL échec: "..tostring(err)
+		flash(evoFrame,{80,30,30},{24,24,28})
 	end
-	return found
-end
-local function processAllSubmit()
-	local tools=getMatchingToolsForSubmit()
-	if #tools==0 then statusLbl.Text="Aucune plante Evo I/II/III (IV exclues) en main/backpack."; flash(evoFrame,{80,30,30},{24,24,28}); return end
-	local success,fail=0,0
-	for i,tool in ipairs(tools) do
-		statusLbl.Text=("Équipe %d/%d: %s"):format(i,#tools,tool.Name)
-		if equipTool(tool,5) then
-			local held = character:FindFirstChildOfClass("Tool")
-			if held and isIVTool(held) then
-				humanoid:UnequipTools()
-				fail=fail+1; statusLbl.Text=("IV détectée, submit annulé pour: %s"):format(tool.Name)
-				flash(evoFrame,{80,30,30},{24,24,28})
-			else
-				pwait(0.05)
-				local ok,err=submitHeld()
-				if ok then success=success+1; statusLbl.Text=("Soumis: %s ✓"):format(tool.Name)
-				else fail=fail+1; statusLbl.Text=("Échec submit %s: %s"):format(tool.Name,tostring(err)); flash(evoFrame,{80,30,30},{24,24,28}) end
-				pwait(0.12)
-			end
-		else
-			fail=fail+1; statusLbl.Text=("Impossible d'équiper: %s"):format(tool.Name); flash(evoFrame,{80,30,30},{24,24,28})
-		end
-	end
-	statusLbl.Text=("Submit terminé — %d succès, %d échecs."):format(success,fail)
-	flash(evoFrame,{30,80,30},{24,24,28})
 end
 
 -- Filet de sécurité Plant_RE
+local function isEvoSeedTool(obj)
+	return obj and obj:IsA("Tool") and obj.Name:lower():find("evo",1,true) and obj.Name:lower():find("seed",1,true)
+end
+local function canonicalEvoName(toolName)
+	local s = tostring(toolName or "")
+	s = s:gsub("%b[]",""):gsub("%b()","")
+	s = s:gsub("[Ss][Ee][Ee][Dd][Ss]?", "")
+	s = s:gsub("%s+[xX]%d+%s*$","")
+	s = s:gsub("%s+", " "):gsub("^%s+",""):gsub("%s+$","")
+	local base, roman = s:match("(Evo%s+[%w%s]+)%s+([IVXivx]+)")
+	if base and roman then return (base:gsub("%s+"," ") .. " " .. roman:upper()):gsub("%s+"," ") end
+	local head = s:match("^(Evo%s+.+)$")
+	return (head or s):gsub("%s+"," ")
+end
+local function isEvoIVByName(evoName)
+	if not evoName then return false end
+	local s = tostring(evoName):upper()
+	s = s:gsub("%b[]",""):gsub("%b()","")
+	s = s:gsub("SEEDS?", ""):gsub("TOOL", "")
+	s = s:gsub("%s+", " "):gsub("^%s+",""):gsub("%s+$","")
+	local roman = s:match("%s([IVX]+)%s*$")
+	return roman == "IV"
+end
+local function parseCountFromToolName(n)
+	return tonumber(n:match("%(x(%d+)%)"))
+	    or tonumber(n:match("%[x(%d+)%]"))
+	    or tonumber(n:match("[^%d]x(%d+)%s*$"))
+	    or tonumber(n:match("%s+[xX](%d+)%s*$"))
+	    or 1
+end
+local function countRemainingForEvo(evoName)
+	if not evoName or isEvoIVByName(evoName) then return 0 end
+	local total = 0
+	for _,obj in ipairs(backpack:GetChildren()) do
+		if isEvoSeedTool(obj) then
+			local name = canonicalEvoName(obj.Name)
+			if not isEvoIVByName(name) and name == evoName then
+				total = total + math.max(1, parseCountFromToolName(obj.Name))
+			end
+		end
+	end
+	return total
+end
+local function findAnySeedToolForEvo(evoName)
+	for _,obj in ipairs(backpack:GetChildren()) do
+		if isEvoSeedTool(obj) then
+			local name = canonicalEvoName(obj.Name)
+			if not isEvoIVByName(name) and name == evoName then
+				return obj
+			end
+		end
+	end
+	return nil
+end
+local function getGroundPositionXZ(x, z)
+	local origin = Vector3.new(x, 50, z)
+	local result = Workspace:Raycast(origin, Vector3.new(0, -200, 0), (function()
+		local p = RaycastParams.new(); p.FilterType = Enum.RaycastFilterType.Exclude; p.FilterDescendantsInstances = {character}; return p
+	end)())
+	if result then return Vector3.new(x, result.Position.Y + 0.01, z) end
+	return Vector3.new(x, 0.13552284240722656, z)
+end
+local function collectEvoGroups()
+	local map = {}
+	for _,obj in ipairs(backpack:GetChildren()) do
+		if isEvoSeedTool(obj) then
+			local evoName = canonicalEvoName(obj.Name)
+			if not isEvoIVByName(evoName) then
+				map[evoName] = (map[evoName] or 0) + math.max(1, parseCountFromToolName(obj.Name))
+			end
+		end
+	end
+	local groups = {}
+	for evoName,count in pairs(map) do table.insert(groups, {evoName=evoName, count=count}) end
+	table.sort(groups, function(a,b) return a.evoName < b.evoName end)
+	return groups
+end
+
+-- Plant EVO Seeds (multi-passes + recap)
 local function safePlant(remote, pos, evoName)
 	if isEvoIVByName(evoName) then return false, "IV filtered" end
 	return pcall(function() remote:FireServer(pos, evoName) end)
 end
-
--- Plant EVO Seeds (multi-passes + recap)
 local function processPlantEvoSeeds()
-	dropIVFromHands()
 	local plantRemote = findPlantRemote()
 	if not plantRemote then statusLbl.Text = "Remote Plant_RE introuvable."; flash(evoFrame,{80,30,30},{24,24,28}); return end
 	local hrp = getHRP(); if not hrp then statusLbl.Text = "HRP introuvable."; flash(evoFrame,{80,30,30},{24,24,28}); return end
@@ -1260,29 +1233,19 @@ local function processPlantEvoSeeds()
 
 				local equipOK = false
 				for _=1,4 do
-					dropIVFromHands()
 					local tool = findAnySeedToolForEvo(evoName)
 					if not tool then break end
-					if equipTool(tool, 3) then
-						local heldNow = character:FindFirstChildOfClass("Tool")
-						if heldNow and isIVTool(heldNow) then
-							humanoid:UnequipTools()
-						else equipOK = true; break end
-					end
-					pwait(0.08)
+					-- pas besoin d'équiper pour Plant_RE si serveur n'exige pas; on laisse la robustesse ici
+					equipOK = true
+					break
 				end
 
 				if not equipOK then
-					statusLbl.Text = ("[Pass %d] %s — impossible d'équiper, on continue. Reste: %d"):format(pass, evoName, remaining)
+					statusLbl.Text = ("[Pass %d] %s — introuvable, on continue. Reste: %d"):format(pass, evoName, remaining)
 				else
 					local plantedThis, noProgressStreak = 0, 0
 					while remaining > 0 do
 						local before = remaining
-						local held = character:FindFirstChildOfClass("Tool")
-						if held and isIVTool(held) then
-							humanoid:UnequipTools()
-							local t = findAnySeedToolForEvo(evoName); if t then equipTool(t, 2) end
-						end
 						local okPlant, perr = safePlant(plantRemote, pos, evoName)
 						if okPlant and perr == nil then
 							pwait(0.10)
@@ -1296,14 +1259,7 @@ local function processPlantEvoSeeds()
 							if perr == "IV filtered" then statusLbl.Text = ("%s — IV détectée (sécurité), skip. Reste %d."):format(evoName, remaining); break end
 							noProgressStreak += 1
 						end
-						dropIVFromHands()
 						if noProgressStreak >= 5 then statusLbl.Text = ("%s — pas de progrès après 5 tentatives, on passe (reste %d)."):format(evoName, remaining); break end
-						if remaining > 0 then
-							local held2 = character:FindFirstChildOfClass("Tool")
-							if (not held2) or canonicalEvoName(held2.Name) ~= evoName or isIVTool(held2) then
-								local t = findAnySeedToolForEvo(evoName); if t then equipTool(t, 2) end
-							end
-						end
 						pwait(0.08)
 					end
 				end
@@ -1324,7 +1280,6 @@ end
 
 -- Planter uniquement Mushroom
 local function processPlantMushroomSeeds()
-	dropIVFromHands()
 	local plantRemote = findPlantRemote()
 	if not plantRemote then statusLbl.Text = "Remote Plant_RE introuvable."; flash(evoFrame,{80,30,30},{24,24,28}); return end
 	local hrp = getHRP(); if not hrp then statusLbl.Text = "HRP introuvable."; flash(evoFrame,{80,30,30},{24,24,28}); return end
@@ -1350,49 +1305,24 @@ local function processPlantMushroomSeeds()
 			local evoName, remaining = g.evoName, g.count
 			statusLbl.Text = string.format("[Mushroom Pass %d] %s — restant: %d", pass, evoName, remaining)
 
-			local equipOK = false
-			for _ = 1, 3 do
-				dropIVFromHands()
-				local tool = findAnySeedToolForEvo(evoName); if not tool then break end
-				if equipTool(tool, 3) then
-					local heldNow = character:FindFirstChildOfClass("Tool")
-					if heldNow and isIVTool(heldNow) then humanoid:UnequipTools() else equipOK = true; break end
+			local plantedThis, noProgressStreak = 0, 0
+			while remaining > 0 do
+				local before = remaining
+				local okPlant, perr = safePlant(plantRemote, pos, evoName)
+				if okPlant and perr == nil then
+					pwait(0.10)
+					local after = countRemainingForEvo(evoName)
+					local delta = before - after
+					if delta > 0 then
+						plantedThis += delta; totalPlanted += delta; passProgress += delta; noProgressStreak = 0; remaining = after
+						statusLbl.Text = string.format("%s — plantés: %d | reste: %d", evoName, plantedThis, remaining)
+					else noProgressStreak += 1; remaining = after end
+				else
+					if perr == "IV filtered" then statusLbl.Text = string.format("%s — IV détectée, skip. Reste %d.", evoName, remaining); break end
+					noProgressStreak += 1
 				end
+				if noProgressStreak >= 5 then statusLbl.Text = string.format("%s — pas de progrès après 5 tentatives.", evoName); break end
 				pwait(0.08)
-			end
-
-			if equipOK then
-				local plantedThis, noProgressStreak = 0, 0
-				while remaining > 0 do
-					local before = remaining
-					local held = character:FindFirstChildOfClass("Tool")
-					if held and isIVTool(held) then
-						humanoid:UnequipTools()
-						local t = findAnySeedToolForEvo(evoName); if t then equipTool(t, 2) end
-					end
-					local okPlant, perr = safePlant(plantRemote, pos, evoName)
-					if okPlant and perr == nil then
-						pwait(0.10)
-						local after = countRemainingForEvo(evoName)
-						local delta = before - after
-						if delta > 0 then
-							plantedThis += delta; totalPlanted += delta; passProgress += delta; noProgressStreak = 0; remaining = after
-							statusLbl.Text = string.format("%s — plantés: %d | reste: %d", evoName, plantedThis, remaining)
-						else noProgressStreak += 1; remaining = after end
-					else
-						if perr == "IV filtered" then statusLbl.Text = string.format("%s — IV détectée, skip. Reste %d.", evoName, remaining); break end
-						noProgressStreak += 1
-					end
-					dropIVFromHands()
-					if noProgressStreak >= 5 then statusLbl.Text = string.format("%s — pas de progrès après 5 tentatives.", evoName); break end
-					if remaining > 0 then
-						local held2 = character:FindFirstChildOfClass("Tool")
-						if (not held2) or canonicalEvoName(held2.Name) ~= evoName or isIVTool(held2) then
-							local t = findAnySeedToolForEvo(evoName); if t then equipTool(t, 2) end
-						end
-					end
-					pwait(0.08)
-				end
 			end
 		end
 		if passProgress <= 0 then break end
@@ -1451,7 +1381,7 @@ rescanBtn.MouseButton1Click:Connect(function()
 end)
 submitBtn.MouseButton1Click:Connect(function()
 	submitBtn.AutoButtonColor=false; submitBtn.BackgroundColor3=Color3.fromRGB(90,90,110)
-	processAllSubmit()
+	submitAllNow()
 	submitBtn.AutoButtonColor=true; submitBtn.BackgroundColor3=Color3.fromRGB(60,120,255)
 end)
 plantEvoBtn.MouseButton1Click:Connect(function()
@@ -1535,4 +1465,9 @@ player.CharacterAdded:Connect(function(char)
 	if isNoclipping then task.wait(0.2); toggleNoclip(nil); toggleNoclip(nil) end
 end)
 
-msg("✅ Saad helper pack chargé — EVO MANAGER compact+bulle (Alt+E / bouton EVO, ● ou Alt+B pour bulle). I/II/III inclus (IV exclus), récap resserré, arrosage 4×, Anti-AFK Ready.", Color3.fromRGB(170,230,255))
+-- ==== Auto-scale sur chaque GUI ====
+applyAutoScale(screenGui, {mainFrame})
+applyAutoScale(gearGui,   {gearFrame})
+applyAutoScale(evoGui,    {evoFrame, bubbleBtn})
+
+msg("✅ Saad helper pack chargé — Submit ALL, EVO BUY x1 corrigé, autos mobiles (UIScale), timers auto -50%, récap & arrosage ok. (Alt+E pour ouvrir EVO, ● ou Alt+B pour bulle)", Color3.fromRGB(170,230,255))
