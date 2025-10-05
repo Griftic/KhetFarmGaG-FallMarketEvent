@@ -1,46 +1,41 @@
--- Saad helper pack v3.0 — Sliders + Reset + Noclip + Gear Panel + Anti-AFK
--- (TP, Sell (TP+retour+caméra figée), Buy All Seeds/Gear + Autos, BUY EVO (auto 55s), BUY EGGS (auto 7m30))
--- +++++ EVO MANAGER (compact + bubble) +++++
--- Submit ALL (remplace l'ancien Submit Held & tcheck)
--- Plant EVO Seeds (comptage backpack, retries ≥5) à ta position (multi-passes auto)
--- UI: Récap des seeds non plantées (hors IV) — tous I/II/III inclus
--- Minimize (—/▣) + Alt+M ; Toggle EVO: Alt+E + bouton « EVO »
--- Bulle mobile ● (Alt+B)
--- Fix: positions en scale (UDim2) + clamp écran + pcall UIStroke + Active sur labels
--- Anti-AFK: nudge périodique + VirtualUser
--- Planting delay: +20% (PLANT_DELAY_FACTOR = 1.2)
--- Bouton ARROSAGE 4 FOIS
--- Drag mobile: Touch
--- >>> Auto-scale UI (UIScale) pour petits écrans / smartphone
+-- Saad helper pack v3.0 + Acorn Collector v2.6
+-- - Player Tuner + Gear Panel + Anti-AFK
+-- - Bouton pour ouvrir l'UI "🌰 ACORN COLLECTOR"
+-- - Acorn Collector: Nutty Fever aware, TP dur + retour XYZ, harvest plantes-only
+-- - Compteur d'acorns + Timer calé Chubby (109s / 30s Fever)
+-- - ⌘/Ctrl + clic pour TP/collect (Mac OK)
+-- - Scanner d'acorn: bouton + auto-scan 29s (Y ∈ [1;4])
+-- - AUTO-HARVEST = version v2.4 (celle qui marche chez toi), réintégrée telle quelle
 
 --// Services
-local Players            = game:GetService("Players")
-local UserInputService   = game:GetService("UserInputService")
-local RunService         = game:GetService("RunService")
-local StarterGui         = game:GetService("StarterGui")
-local ReplicatedStorage  = game:GetService("ReplicatedStorage")
-local TweenService       = game:GetService("TweenService")
-local Workspace          = game:GetService("Workspace")
-local VirtualUser        = game:GetService("VirtualUser")
+local Players             = game:GetService("Players")
+local UserInputService    = game:GetService("UserInputService")
+local RunService          = game:GetService("RunService")
+local StarterGui          = game:GetService("StarterGui")
+local ReplicatedStorage   = game:GetService("ReplicatedStorage")
+local TweenService        = game:GetService("TweenService")
+local Workspace           = game:GetService("Workspace")
+local VirtualUser         = game:GetService("VirtualUser")
 local VirtualInputManager = game:GetService("VirtualInputManager")
+local SoundService        = game:GetService("SoundService")
 
-local player             = Players.LocalPlayer
-local playerGui          = player:WaitForChild("PlayerGui")
+local player    = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
 
 --// Consts
 local DEFAULT_GRAVITY, DEFAULT_JUMPPOWER, DEFAULT_WALKSPEED = 196.2, 50, 16
-local GEAR_SHOP_POS     = Vector3.new(-288, 2, -15)
-local SELL_NPC_POS      = Vector3.new(87,   3,   0)
+local GEAR_SHOP_POS = Vector3.new(-288, 2, -15)
+local SELL_NPC_POS  = Vector3.new(87, 3, 0)
 
 -- Anti-AFK
 local ANTI_AFK_PERIOD   = 60
 local ANTI_AFK_DURATION = 0.35
 
--- Planting delay +20%
+-- Planting pacing
 local PLANT_DELAY_FACTOR = 1.2
 local function pwait(t) task.wait(t * PLANT_DELAY_FACTOR) end
 
--- Seeds/Gears definitions
+-- Seeds/Gears
 local SEED_TIER = "Tier 1"
 local SEEDS = {
 	"Carrot","Strawberry","Blueberry","Orange Tulip","Tomato","Corn","Daffodil","Watermelon",
@@ -54,18 +49,16 @@ local GEARS = {
 	"Cleaning Spray","Cleansing Pet Shard","Favorite Tool","Harvest Tool","Friendship Pot",
 	"Grandmaster Sprinkler","Level Up Lollipop"
 }
-
--- Eggs list (buy via BuyPetEgg)
 local EGGS = {
 	"Common Egg","Uncommon Egg","Rare Egg","Legendary Egg","Mythical Egg","Bug Egg","Jungle Egg"
 }
 
--- <<< Auto périodes réduites de 50% >>>
+-- Auto périodes
 local MAX_TRIES_PER_SEED, MAX_TRIES_PER_GEAR = 20, 5
-local AUTO_PERIOD_SEEDS   = 150   -- 2m30 (au lieu de 5 min)
-local AUTO_PERIOD_GEAR    = 150   -- 2m30
-local AUTO_PERIOD_EVENT   = 55    -- 0m55 (au lieu de 1m50)
-local AUTO_PERIOD_EGGS    = 450   -- 7m30 (au lieu de 15m)
+local AUTO_PERIOD_SEEDS = 150
+local AUTO_PERIOD_GEAR  = 150
+local AUTO_PERIOD_EVENT = 55
+local AUTO_PERIOD_EGGS  = 450
 
 --// State
 local currentSpeed, currentGravity, currentJump = 18, 147.1, 60
@@ -93,7 +86,7 @@ local function msg(text, color)
 	end)
 end
 local function getHRP()
-	local c=Players.LocalPlayer.Character
+	local c = player.Character
 	return c and c:FindFirstChild("HumanoidRootPart")
 end
 local function applySpeed(v)   currentSpeed=v;  local h=player.Character and player.Character:FindFirstChildOfClass("Humanoid"); if h then h.WalkSpeed=v end end
@@ -110,7 +103,7 @@ local function withFrozenCamera(fn)
 end
 local function fmtTime(sec) sec=math.max(0,math.floor(sec+0.5)) local m=math.floor(sec/60) local s=sec%60 return string.format("%d:%02d",m,s) end
 
--- Ecran clamp pour frames (évite off-screen)
+-- Clamp UI à l’écran
 local function clampOnScreen(frame)
 	task.defer(function()
 		if not frame or not frame.Parent then return end
@@ -124,13 +117,12 @@ local function clampOnScreen(frame)
 	end)
 end
 
--- === Responsive autoscale (mobile friendly) ===
-local function applyAutoScale(screenGui, clampTargets)
+-- AutoScale
+local function applyAutoScale(screenGuiX, clampTargets)
 	local cam = workspace.CurrentCamera
-	local scaleObj = screenGui:FindFirstChild("AutoScale") or Instance.new("UIScale")
+	local scaleObj = screenGuiX:FindFirstChild("AutoScale") or Instance.new("UIScale")
 	scaleObj.Name = "AutoScale"
-	scaleObj.Parent = screenGui
-
+	scaleObj.Parent = screenGuiX
 	local function computeScale()
 		local vp = (cam and cam.ViewportSize) or Vector2.new(1280, 720)
 		local w, h = vp.X, vp.Y
@@ -140,7 +132,6 @@ local function applyAutoScale(screenGui, clampTargets)
 		if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then s = s * 0.9 end
 		return math.clamp(s, 0.55, 1.0)
 	end
-
 	local function refresh()
 		scaleObj.Scale = computeScale()
 		if clampTargets then
@@ -149,7 +140,6 @@ local function applyAutoScale(screenGui, clampTargets)
 			end
 		end
 	end
-
 	refresh()
 	if cam then cam:GetPropertyChangedSignal("ViewportSize"):Connect(refresh) end
 	UserInputService:GetPropertyChangedSignal("TouchEnabled"):Connect(refresh)
@@ -162,14 +152,12 @@ local function safeWait(path, timeout)
 	for _,name in ipairs(path) do node=node:WaitForChild(name, timeout) if not node then return nil end end
 	return node
 end
-local function getSellInventoryRemote()  local r=safeWait({"GameEvents","Sell_Inventory"},2)               return (r and r:IsA("RemoteEvent")) and r or nil end
-local function getBuySeedRemote()        local r=safeWait({"GameEvents","BuySeedStock"},2)                 return (r and r:IsA("RemoteEvent")) and r or nil end
-local function getBuyGearRemote()        local r=safeWait({"GameEvents","BuyGearStock"},2)                 return (r and r:IsA("RemoteEvent")) and r or nil end
+local function getSellInventoryRemote()  local r=safeWait({"GameEvents","Sell_Inventory"},2)                return (r and r:IsA("RemoteEvent")) and r or nil end
+local function getBuySeedRemote()        local r=safeWait({"GameEvents","BuySeedStock"},2)                  return (r and r:IsA("RemoteEvent")) and r or nil end
+local function getBuyGearRemote()        local r=safeWait({"GameEvents","BuyGearStock"},2)                  return (r and r:IsA("RemoteEvent")) and r or nil end
 local function getBuyEventRemote()
-	-- version plate (non-namespacée)
 	local r=safeWait({"GameEvents","BuyEventShopStock"},2)
 	if r and r:IsA("RemoteEvent") then return r end
-	-- fallback éventuel sous un dossier (compat)
 	r=safeWait({"GameEvents","FallMarketEvent","BuyEventShopStock"},2)
 	return (r and r:IsA("RemoteEvent")) and r or nil
 end
@@ -177,8 +165,8 @@ local function getBuyPetEggRemote()
 	local r=safeWait({"GameEvents","BuyPetEgg"},2)
 	return (r and r:IsA("RemoteEvent")) and r or nil
 end
-local function findPlantRemote()
-	local r=safeWait({"GameEvents","Plant_RE"},2)
+local function getSubmitChipmunkRemote()
+	local r = safeWait({"GameEvents","SubmitChipmunkFruit"},2)
 	return (r and r:IsA("RemoteEvent")) and r or nil
 end
 
@@ -221,7 +209,7 @@ local function buyAllGearWorker()
 	msg("🎉 Gears terminé.")
 end
 
--- BUY EVO (4 seeds exactes, quantité = 1)
+-- BUY EVO
 local EVO_LIST = { "Evo Beetroot I","Evo Blueberry I","Evo Pumpkin I","Evo Mushroom I" }
 local function buyEventEvosWorker()
 	local remote = getBuyEventRemote()
@@ -265,13 +253,13 @@ task.spawn(function()
 		if autoBuyEggs  then eggsTimer  = eggsTimer  - 1 else eggsTimer  = AUTO_PERIOD_EGGS end
 		if autoBuySeeds and seedsTimer<=0 then buyAllSeedsWorker(); seedsTimer=AUTO_PERIOD_SEEDS end
 		if autoBuyGear  and gearTimer<=0  then buyAllGearWorker();  gearTimer =AUTO_PERIOD_GEAR  end
-		if autoBuyEvent and eventTimer<=0 then buyEventEvosWorker();eventTimer=AUTO_PERIOD_EVENT end
+		if autoBuyEvent and eventTimer<=0 then buyEventEvosWorker(); eventTimer=AUTO_PERIOD_EVENT end
 		if autoBuyEggs  and eggsTimer<=0  then buyAllEggsWorker();  eggsTimer =AUTO_PERIOD_EGGS  end
 		updateTimerLabels()
 	end
 end)
 
--- Draggable (Mouse + Touch)
+-- Draggable
 local function makeDraggable(frame, handle)
 	frame.Active = true; frame.Selectable = true
 	handle.Active = true; handle.Selectable = true
@@ -310,7 +298,7 @@ local function makeDraggable(frame, handle)
 	end)
 end
 
--- Helper to avoid CornerRadius typos
+-- Helper
 local function rounded(obj, r)
 	local ui = Instance.new("UICorner")
 	ui.CornerRadius = UDim.new(0, r or 8)
@@ -322,11 +310,11 @@ end
 screenGui = Instance.new("ScreenGui")
 screenGui.Name = "PlayerTuner"
 screenGui.ResetOnSpawn = false
-screenGui.IgnoreGuiInset = true
+screenGui.IgnoreGuiInset = false -- ✅
 screenGui.Parent = playerGui
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.fromOffset(320, 290)
+mainFrame.Size = UDim2.fromOffset(320, 326)
 mainFrame.Position = UDim2.fromScale(0.02, 0.04)
 mainFrame.BackgroundColor3 = Color3.fromRGB(36,36,36)
 mainFrame.BorderSizePixel = 0
@@ -340,7 +328,7 @@ titleBar.Parent = mainFrame
 rounded(titleBar, 10)
 
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -150, 1, 0)
+title.Size = UDim2.new(1, -110, 1, 0)
 title.Position = UDim2.new(0, 10, 0, 0)
 title.BackgroundTransparency = 1
 title.TextColor3 = Color3.fromRGB(255,255,255)
@@ -349,17 +337,6 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 16
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = titleBar
-
-local quickEvoBtn = Instance.new("TextButton")
-quickEvoBtn.Size = UDim2.fromOffset(42, 26)
-quickEvoBtn.Position = UDim2.new(1, -88, 0, 5)
-quickEvoBtn.BackgroundColor3 = Color3.fromRGB(120, 90, 150)
-quickEvoBtn.TextColor3 = Color3.fromRGB(255,255,255)
-quickEvoBtn.Text = "EVO"
-quickEvoBtn.Font = Enum.Font.GothamBold
-quickEvoBtn.TextSize = 12
-quickEvoBtn.Parent = titleBar
-rounded(quickEvoBtn, 0)
 
 local closeButton = Instance.new("TextButton")
 closeButton.Size = UDim2.fromOffset(26, 26)
@@ -373,7 +350,7 @@ closeButton.Parent = titleBar
 rounded(closeButton, 0)
 
 local isMinimized = false
-local fullSize = UDim2.fromOffset(320, 290)
+local fullSize = UDim2.fromOffset(320, 326)
 local collapsedSize = UDim2.fromOffset(320, 36)
 local minimizeButton = Instance.new("TextButton")
 minimizeButton.Size = UDim2.fromOffset(26, 26)
@@ -531,7 +508,7 @@ antiAFKBtn.Text = "🛡️ Anti-AFK: OFF"
 antiAFKBtn.Font = Enum.Font.GothamBold
 antiAFKBtn.TextSize = 13
 antiAFKBtn.Parent = miscRow
-rounded(antisAFKBtn,8) -- (typo volontiers toléré par Luau; sinon commentez cette ligne si erreur)
+rounded(antiAFKBtn,8)
 
 local antiAFKHint = Instance.new("TextLabel")
 antiAFKHint.Size = UDim2.new(0.52, 0, 1, 0)
@@ -543,6 +520,21 @@ antiAFKHint.TextSize = 12
 antiAFKHint.TextColor3 = Color3.fromRGB(200,220,200)
 antiAFKHint.Text = "Simule mouvement toutes 60s"
 antiAFKHint.Parent = miscRow
+
+-- Row 3: Bouton ACORN
+local acornRow = Instance.new("Frame"); acornRow.Size = UDim2.new(1, 0, 0, 36); acornRow.Position = UDim2.new(0, 0, 0, 272)
+acornRow.BackgroundTransparency = 1; acornRow.Parent = content
+
+local openAcornBtn = Instance.new("TextButton")
+openAcornBtn.Size = UDim2.new(1, 0, 1, 0)
+openAcornBtn.Position = UDim2.new(0, 0, 0, 0)
+openAcornBtn.BackgroundColor3 = Color3.fromRGB(200, 160, 60)
+openAcornBtn.TextColor3 = Color3.fromRGB(30,30,30)
+openAcornBtn.Text = "🌰 ACORN COLLECTOR"
+openAcornBtn.Font = Enum.Font.GothamBold
+openAcornBtn.TextSize = 14
+openAcornBtn.Parent = acornRow
+rounded(openAcornBtn,8)
 
 resetBtn.MouseButton1Click:Connect(function()
 	resetDefaults()
@@ -563,11 +555,11 @@ end)
 gearGui = Instance.new("ScreenGui")
 gearGui.Name = "GearPanel"
 gearGui.ResetOnSpawn = false
-gearGui.IgnoreGuiInset = true
+gearGui.IgnoreGuiInset = false -- ✅
 gearGui.Parent = playerGui
 
 gearFrame = Instance.new("Frame")
-gearFrame.Size = UDim2.fromOffset(260, 450)
+gearFrame.Size = UDim2.fromOffset(260, 500)
 gearFrame.Position = UDim2.fromScale(0.26, 0.04)
 gearFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 80)
 gearFrame.BorderSizePixel = 0
@@ -581,7 +573,7 @@ gearTitleBar.Parent = gearFrame
 rounded(gearTitleBar,10)
 
 local gearTitle = Instance.new("TextLabel")
-gearTitle.Size = UDim2.new(1, -120, 1, 0)
+gearTitle.Size = UDim2.new(1, -40, 1, 0)
 gearTitle.Position = UDim2.new(0, 10, 0, 0)
 gearTitle.BackgroundTransparency = 1
 gearTitle.TextColor3 = Color3.fromRGB(255,255,255)
@@ -601,17 +593,6 @@ gearClose.Font = Enum.Font.GothamBold
 gearClose.TextSize = 12
 gearClose.Parent = gearTitleBar
 rounded(gearClose,0)
-
-local evoManagerBtn = Instance.new("TextButton")
-evoManagerBtn.Size = UDim2.fromOffset(130, 20)
-evoManagerBtn.Position = UDim2.new(1, -160, 0, 4)
-evoManagerBtn.BackgroundColor3 = Color3.fromRGB(120, 90, 150)
-evoManagerBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-evoManagerBtn.Text = "🔧 EVO MANAGER"
-evoManagerBtn.Font = Enum.Font.GothamBold
-evoManagerBtn.TextSize = 11
-evoManagerBtn.Parent = gearTitleBar
-rounded(evoManagerBtn,0)
 
 local gearContent = Instance.new("Frame")
 gearContent.Size = UDim2.new(1, -16, 1, -40)
@@ -654,10 +635,22 @@ sellBtn.TextSize = 12
 sellBtn.Parent = gearContent
 rounded(sellBtn,8)
 
+-- SUBMIT ALL (Chipmunk)
+local submitAllChipBtn = Instance.new("TextButton")
+submitAllChipBtn.Size = UDim2.new(1, 0, 0, 26)
+submitAllChipBtn.Position = UDim2.new(0, 0, 0, 94)
+submitAllChipBtn.BackgroundColor3 = Color3.fromRGB(90, 140, 210)
+submitAllChipBtn.TextColor3 = Color3.fromRGB(255,255,255)
+submitAllChipBtn.Text = "🍁 SUBMIT ALL (Chipmunk)"
+submitAllChipBtn.Font = Enum.Font.GothamBold
+submitAllChipBtn.TextSize = 12
+submitAllChipBtn.Parent = gearContent
+rounded(submitAllChipBtn,8)
+
 -- Seeds row
 local seedsRow = Instance.new("Frame")
 seedsRow.Size = UDim2.new(1, 0, 0, 26)
-seedsRow.Position = UDim2.new(0, 0, 0, 94)
+seedsRow.Position = UDim2.new(0, 0, 0, 126)
 seedsRow.BackgroundTransparency = 1
 seedsRow.Parent = gearContent
 
@@ -697,7 +690,7 @@ rounded(seedsTimerLabel,8)
 -- Gear row
 local gearRow = Instance.new("Frame")
 gearRow.Size = UDim2.new(1, 0, 0, 26)
-gearRow.Position = UDim2.new(0, 0, 0, 126)
+gearRow.Position = UDim2.new(0, 0, 0, 158)
 gearRow.BackgroundTransparency = 1
 gearRow.Parent = gearContent
 
@@ -734,10 +727,10 @@ gearTimerLabel.TextSize = 12
 gearTimerLabel.Parent = gearRow
 rounded(gearTimerLabel,8)
 
--- EVO row (event)
+-- EVO row
 local eventRow = Instance.new("Frame")
 eventRow.Size = UDim2.new(1, 0, 0, 26)
-eventRow.Position = UDim2.new(0, 0, 0, 158)
+eventRow.Position = UDim2.new(0, 0, 0, 190)
 eventRow.BackgroundTransparency = 1
 eventRow.Parent = gearContent
 
@@ -777,7 +770,7 @@ rounded(eventTimerLabel,8)
 -- EGGS row
 local eggsRow = Instance.new("Frame")
 eggsRow.Size = UDim2.new(1, 0, 0, 26)
-eggsRow.Position = UDim2.new(0, 0, 0, 190)
+eggsRow.Position = UDim2.new(0, 0, 0, 222)
 eggsRow.BackgroundTransparency = 1
 eggsRow.Parent = gearContent
 
@@ -825,6 +818,23 @@ sellBtn.MouseButton1Click:Connect(function()
 		teleportTo(SELL_NPC_POS); pwait(0.20); r:FireServer(); pwait(0.05); hrp.CFrame = back
 	end)
 	msg("🧺 Inventaire vendu (TP/retour).", Color3.fromRGB(220,200,140))
+end)
+
+local function submitAllChipmunk()
+	local r = getSubmitChipmunkRemote()
+	if not r then msg("❌ Remote SubmitChipmunkFruit introuvable.", Color3.fromRGB(255,120,120)); return end
+	local ok, err = pcall(function() r:FireServer("All") end)
+	if ok then msg("✅ SubmitChipmunkFruit: All envoyé.", Color3.fromRGB(160,230,200))
+	else msg("❌ Erreur SubmitChipmunkFruit: "..tostring(err), Color3.fromRGB(255,120,120)) end
+end
+submitAllChipBtn.MouseButton1Click:Connect(function()
+	submitAllChipBtn.AutoButtonColor = false
+	submitAllChipBtn.BackgroundColor3 = Color3.fromRGB(70, 110, 170)
+	submitAllChipmunk()
+	task.delay(0.2, function()
+		submitAllChipBtn.AutoButtonColor = true
+		submitAllChipBtn.BackgroundColor3 = Color3.fromRGB(90, 140, 210)
+	end)
 end)
 
 buyAllSeedsButton.MouseButton1Click:Connect(function() buyAllSeedsWorker(); seedsTimer = AUTO_PERIOD_SEEDS; updateTimerLabels() end)
@@ -886,542 +896,6 @@ do
 	end)
 end
 
--- ======== EVO MANAGER (COMPACT + BUBBLE) ========
-local character = player.Character or player.CharacterAdded:Wait()
-local humanoid = character:WaitForChild("Humanoid")
-player.CharacterAdded:Connect(function(char) character = char; humanoid = char:WaitForChild("Humanoid") end)
-local backpack = player:WaitForChild("Backpack")
-
--- Remotes (Submit ALL + Water)
-local Tiered  = ReplicatedStorage:WaitForChild("GameEvents"):WaitForChild("TieredPlants")
-local Submit  = Tiered:WaitForChild("Submit")
-local Water_RE = ReplicatedStorage:WaitForChild("GameEvents"):WaitForChild("Water_RE")
-
--- Équiper arrosoir (&) puis arroser 4× au sol proche
-local function equiperArrosoir()
-	pcall(function()
-		VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Ampersand, false, game); task.wait(0.1)
-		VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Ampersand, false, game)
-	end)
-	task.wait(0.5)
-end
-local function getGroundPosition()
-	local c = player.Character; if not c then return nil end
-	local hrp = c:FindFirstChild("HumanoidRootPart"); if not hrp then return nil end
-	local origin = hrp.Position
-	local result = workspace:Raycast(origin, Vector3.new(0,-10,0), (function()
-		local p = RaycastParams.new(); p.FilterType = Enum.RaycastFilterType.Blacklist; p.FilterDescendantsInstances = {c}; return p
-	end)())
-	local y = result and result.Position.Y + 0.001 or 0.13552188873291016
-	return Vector3.new(hrp.Position.X, y, hrp.Position.Z)
-end
-local function arroser4Fois()
-	equiperArrosoir()
-	task.wait(0.2)
-	local pos = getGroundPosition(); if not pos then return end
-	for i=1,4 do pcall(function() Water_RE:FireServer(pos) end); if i<4 then task.wait(0.3) end end
-end
-
--- ====== EVO UI compact ======
-local evoGui = Instance.new("ScreenGui"); evoGui.Name="EvoManager"; evoGui.ResetOnSpawn=false; evoGui.IgnoreGuiInset=true; evoGui.Parent=playerGui
-
--- BUBBLE UI
-local bubbleBtn = Instance.new("Frame")
-bubbleBtn.Name = "EvoBubble"
-bubbleBtn.Size = UDim2.fromOffset(46, 46)
-bubbleBtn.Position = UDim2.fromScale(0.88, 0.18)
-bubbleBtn.BackgroundColor3 = Color3.fromRGB(95, 85, 140)
-bubbleBtn.Visible = false
-bubbleBtn.Parent = evoGui
-rounded(bubbleBtn, 23)
-local bubbleStroke = Instance.new("UIStroke"); bubbleStroke.Thickness=1.5; bubbleStroke.Color=Color3.fromRGB(210,210,235); bubbleStroke.Parent=bubbleBtn
-local bubbleGlyph = Instance.new("TextLabel"); bubbleGlyph.Size=UDim2.fromScale(1,1); bubbleGlyph.BackgroundTransparency=1; bubbleGlyph.Text="EVO"; bubbleGlyph.Font=Enum.Font.GothamBold; bubbleGlyph.TextSize=14; bubbleGlyph.TextColor3=Color3.fromRGB(255,255,255); bubbleGlyph.Parent=bubbleBtn
-makeDraggable(bubbleBtn, bubbleBtn)
-
-local evoFrame = Instance.new("Frame")
-evoFrame.Size = UDim2.fromOffset(420, 310)
-evoFrame.Position = UDim2.fromScale(0.62, 0.04)
-evoFrame.BackgroundColor3=Color3.fromRGB(24,24,28); evoFrame.BorderSizePixel=0; evoFrame.Visible=false; evoFrame.Parent=evoGui
-rounded(evoFrame,10)
-pcall(function() local s=Instance.new("UIStroke"); s.Thickness=1; s.Color=Color3.fromRGB(70,70,80); s.Parent=evoFrame end)
-makeDraggable(evoFrame, evoFrame)
-clampOnScreen(evoFrame)
-
-local evoTitle = Instance.new("TextLabel"); evoTitle.Size=UDim2.new(1,-70,0,26); evoTitle.Position=UDim2.new(0,12,0,6)
-evoTitle.BackgroundTransparency=1; evoTitle.Font=Enum.Font.GothamSemibold; evoTitle.TextSize=16; evoTitle.TextXAlignment=Enum.TextXAlignment.Left
-evoTitle.Text="🔧 EVO MANAGER — Submit ALL + Plant"; evoTitle.TextColor3=Color3.fromRGB(235,235,245); evoTitle.Parent=evoFrame
-
--- Bouton "en bulle"
-local toBubbleBtn = Instance.new("TextButton"); toBubbleBtn.Size=UDim2.fromOffset(26,26); toBubbleBtn.Position=UDim2.new(1,-62,0,6)
-toBubbleBtn.BackgroundColor3=Color3.fromRGB(55,55,75); toBubbleBtn.Text="●"; toBubbleBtn.Font=Enum.Font.GothamBold; toBubbleBtn.TextSize=16; toBubbleBtn.TextColor3=Color3.fromRGB(235,235,245); toBubbleBtn.Parent=evoFrame
-rounded(toBubbleBtn,13)
-
-local evoClose = Instance.new("TextButton"); evoClose.Size=UDim2.fromOffset(26,26); evoClose.Position=UDim2.new(1,-34,0,6)
-evoClose.BackgroundColor3=Color3.fromRGB(45,45,55); evoClose.Text="✕"; evoClose.Font=Enum.Font.GothamBold; evoClose.TextSize=14; evoClose.TextColor3=Color3.fromRGB(235,235,245); evoClose.Parent=evoFrame
-rounded(evoClose,0)
-
--- Ligne d’actions
-local actionsRow = Instance.new("Frame")
-actionsRow.Size = UDim2.new(1, -24, 0, 36)
-actionsRow.Position = UDim2.new(0, 12, 0, 40)
-actionsRow.BackgroundColor3 = Color3.fromRGB(28,28,34)
-actionsRow.Parent = evoFrame
-rounded(actionsRow, 10)
-
-local rescanBtn = Instance.new("TextButton"); rescanBtn.Size=UDim2.new(0.48,-6,1,0); rescanBtn.Position=UDim2.new(0,6,0,4)
-rescanBtn.BackgroundColor3=Color3.fromRGB(80,85,100); rescanBtn.Text="Rescan Backpack"; rescanBtn.Font=Enum.Font.GothamBold; rescanBtn.TextSize=14; rescanBtn.TextColor3=Color3.fromRGB(255,255,255); rescanBtn.Parent=actionsRow; rounded(rescanBtn,8)
-local submitBtn = Instance.new("TextButton"); submitBtn.Size=UDim2.new(0.48,-6,1,0); submitBtn.Position=UDim2.new(0.52,0,0,4)
-submitBtn.BackgroundColor3=Color3.fromRGB(60,120,255); submitBtn.Text="Submit: ALL"; submitBtn.Font=Enum.Font.GothamBold; submitBtn.TextSize=14; submitBtn.TextColor3=Color3.fromRGB(255,255,255); submitBtn.Parent=actionsRow; rounded(submitBtn,8)
-
--- Bouton ARROSAGE 4×
-local water4xBtn = Instance.new("TextButton")
-water4xBtn.Size = UDim2.new(1, -24, 0, 32)
-water4xBtn.Position = UDim2.new(0, 12, 0, 80)
-water4xBtn.BackgroundColor3 = Color3.fromRGB(60, 140, 200)
-water4xBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-water4xBtn.Text = "💦 ARROSER 4 FOIS à ma position (sol)"
-water4xBtn.Font = Enum.Font.GothamBold
-water4xBtn.TextSize = 13
-water4xBtn.Parent = evoFrame
-rounded(water4xBtn, 8)
-
--- Section plantation
-local plantingSection = Instance.new("Frame")
-plantingSection.Size = UDim2.new(1, -24, 0, 122)
-plantingSection.Position = UDim2.new(0, 12, 0, 116)
-plantingSection.BackgroundColor3 = Color3.fromRGB(28, 28, 34)
-plantingSection.Parent = evoFrame
-rounded(plantingSection, 10)
-
-local plantingTitle = Instance.new("TextLabel")
-plantingTitle.Size = UDim2.new(1, -16, 0, 18)
-plantingTitle.Position = UDim2.new(0, 8, 0, 6)
-plantingTitle.BackgroundTransparency = 1
-plantingTitle.Font = Enum.Font.GothamSemibold
-plantingTitle.TextSize = 14
-plantingTitle.TextXAlignment = Enum.TextXAlignment.Left
-plantingTitle.TextColor3 = Color3.fromRGB(220, 220, 230)
-plantingTitle.Text = "🌱 ZONE DE PLANTATION"
-plantingTitle.Parent = plantingSection
-
-local posLabel = Instance.new("TextLabel")
-posLabel.Size = UDim2.new(1, -16, 0, 16)
-posLabel.Position = UDim2.new(0, 8, 0, 26)
-posLabel.BackgroundTransparency = 1
-posLabel.Font = Enum.Font.Gotham
-posLabel.TextSize = 12
-posLabel.TextXAlignment = Enum.TextXAlignment.Left
-posLabel.TextColor3 = Color3.fromRGB(200, 200, 220)
-posLabel.Text = "Pos: (…)"
-posLabel.Parent = plantingSection
-
-local plantingButtonsContainer = Instance.new("Frame")
-plantingButtonsContainer.Size = UDim2.new(1, -16, 0, 28)
-plantingButtonsContainer.Position = UDim2.new(0, 8, 0, 44)
-plantingButtonsContainer.BackgroundTransparency = 1
-plantingButtonsContainer.Parent = plantingSection
-
-local plantEvoBtn = Instance.new("TextButton")
-plantEvoBtn.Size = UDim2.new(0.48, -4, 1, 0)
-plantEvoBtn.Position = UDim2.new(0, 0, 0, 0)
-plantEvoBtn.BackgroundColor3 = Color3.fromRGB(50, 160, 90)
-plantEvoBtn.Text = "🌱 Planter EVO Seeds"
-plantEvoBtn.Font = Enum.Font.GothamBold
-plantEvoBtn.TextSize = 12
-plantEvoBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-plantEvoBtn.Parent = plantingButtonsContainer
-rounded(plantEvoBtn, 8)
-
-local plantMushroomBtn = Instance.new("TextButton")
-plantMushroomBtn.Size = UDim2.new(0.48, -4, 1, 0)
-plantMushroomBtn.Position = UDim2.new(0.52, 4, 0, 0)
-plantMushroomBtn.BackgroundColor3 = Color3.fromRGB(160, 90, 160)
-plantMushroomBtn.Text = "🍄 Planter Mushroom"
-plantMushroomBtn.Font = Enum.Font.GothamBold
-plantMushroomBtn.TextSize = 12
-plantMushroomBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-plantMushroomBtn.Parent = plantingButtonsContainer
-rounded(plantMushroomBtn, 8)
-
--- Récap
-local recapSection = Instance.new("Frame")
-recapSection.Size = UDim2.new(1, -16, 0, 32)
-recapSection.Position = UDim2.new(0, 8, 0, 74)
-recapSection.BackgroundColor3 = Color3.fromRGB(32, 32, 38)
-recapSection.Parent = plantingSection
-rounded(recapSection, 8)
-
-local recapTitle = Instance.new("TextLabel")
-recapTitle.Size = UDim2.new(1, -8, 0, 14)
-recapTitle.Position = UDim2.new(0, 4, 0, 3)
-recapTitle.BackgroundTransparency = 1
-recapTitle.Font = Enum.Font.GothamSemibold
-recapTitle.TextSize = 12
-recapTitle.TextXAlignment = Enum.TextXAlignment.Left
-recapTitle.TextColor3 = Color3.fromRGB(220, 220, 235)
-recapTitle.Text = "📋 Récap non plantés (hors IV) :"
-recapTitle.Parent = recapSection
-
-local recapFrame = Instance.new("ScrollingFrame")
-recapFrame.Size = UDim2.new(1, -8, 0, 14)
-recapFrame.Position = UDim2.new(0, 4, 0, 18)
-recapFrame.BackgroundTransparency = 1
-recapFrame.ScrollBarThickness = 4
-recapFrame.Parent = recapSection
-local recapList = Instance.new("UIListLayout")
-recapList.Parent = recapFrame
-recapList.Padding = UDim.new(0, 2)
-
--- Status
-local statusLbl = Instance.new("TextLabel")
-statusLbl.Size = UDim2.new(1, -16, 0, 16)
-statusLbl.Position = UDim2.new(0, 8, 0, 106)
-statusLbl.BackgroundTransparency = 1
-statusLbl.Font = Enum.Font.Gotham
-statusLbl.TextSize = 12
-statusLbl.TextXAlignment = Enum.TextXAlignment.Left
-statusLbl.TextColor3 = Color3.fromRGB(200, 200, 210)
-statusLbl.Text = "Prêt."
-statusLbl.Parent = plantingSection
-
-local function flash(frame, fromRGB, toRGB)
-	frame.BackgroundColor3 = Color3.fromRGB(fromRGB[1],fromRGB[2],fromRGB[3])
-	TweenService:Create(frame, TweenInfo.new(0.25), {BackgroundColor3=Color3.fromRGB(toRGB[1],toRGB[2],toRGB[3])}):Play()
-end
-
--- Helpers recap
-local function clearRecap()
-	for _,child in ipairs(recapFrame:GetChildren()) do
-		if child:IsA("TextLabel") then child:Destroy() end
-	end
-end
-local function setRecap(items)
-	clearRecap()
-	if #items == 0 then
-		local lbl = Instance.new("TextLabel"); lbl.Size = UDim2.new(1, 0, 0, 14); lbl.BackgroundTransparency = 1
-		lbl.Font = Enum.Font.Gotham; lbl.TextSize = 12; lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.TextColor3 = Color3.fromRGB(200,210,220)
-		lbl.Text = "Tout planté ✅"; lbl.Parent = recapFrame; return
-	end
-	for _,it in ipairs(items) do
-		local row = Instance.new("TextLabel"); row.Size = UDim2.new(1, 0, 0, 14); row.BackgroundTransparency = 1
-		row.Font = Enum.Font.Gotham; row.TextSize = 12; row.TextXAlignment = Enum.TextXAlignment.Left; row.TextColor3 = Color3.fromRGB(220,200,200)
-		row.Text = string.format("%s — restants: %d", it.evoName, it.count); row.Parent = recapFrame
-	end
-end
-
--- ==== Submit ALL (remplace tout l'ancien "submit held") ====
-local function submitAllNow()
-	local ok, err = pcall(function()
-		local args = { [1] = "All" }
-		Submit:FireServer(unpack(args))
-	end)
-	if ok then
-		statusLbl.Text = "✅ Submit ALL envoyé."
-		flash(evoFrame,{30,80,30},{24,24,28})
-	else
-		statusLbl.Text = "❌ Submit ALL échec: "..tostring(err)
-		flash(evoFrame,{80,30,30},{24,24,28})
-	end
-end
-
--- Filet de sécurité Plant_RE
-local function isEvoSeedTool(obj)
-	return obj and obj:IsA("Tool") and obj.Name:lower():find("evo",1,true) and obj.Name:lower():find("seed",1,true)
-end
-local function canonicalEvoName(toolName)
-	local s = tostring(toolName or "")
-	s = s:gsub("%b[]",""):gsub("%b()","")
-	s = s:gsub("[Ss][Ee][Ee][Dd][Ss]?", "")
-	s = s:gsub("%s+[xX]%d+%s*$","")
-	s = s:gsub("%s+", " "):gsub("^%s+",""):gsub("%s+$","")
-	local base, roman = s:match("(Evo%s+[%w%s]+)%s+([IVXivx]+)")
-	if base and roman then return (base:gsub("%s+"," ") .. " " .. roman:upper()):gsub("%s+"," ") end
-	local head = s:match("^(Evo%s+.+)$")
-	return (head or s):gsub("%s+"," ")
-end
-local function isEvoIVByName(evoName)
-	if not evoName then return false end
-	local s = tostring(evoName):upper()
-	s = s:gsub("%b[]",""):gsub("%b()","")
-	s = s:gsub("SEEDS?", ""):gsub("TOOL", "")
-	s = s:gsub("%s+", " "):gsub("^%s+",""):gsub("%s+$","")
-	local roman = s:match("%s([IVX]+)%s*$")
-	return roman == "IV"
-end
-local function parseCountFromToolName(n)
-	return tonumber(n:match("%(x(%d+)%)"))
-	    or tonumber(n:match("%[x(%d+)%]"))
-	    or tonumber(n:match("[^%d]x(%d+)%s*$"))
-	    or tonumber(n:match("%s+[xX](%d+)%s*$"))
-	    or 1
-end
-local function countRemainingForEvo(evoName)
-	if not evoName or isEvoIVByName(evoName) then return 0 end
-	local total = 0
-	for _,obj in ipairs(backpack:GetChildren()) do
-		if isEvoSeedTool(obj) then
-			local name = canonicalEvoName(obj.Name)
-			if not isEvoIVByName(name) and name == evoName then
-				total = total + math.max(1, parseCountFromToolName(obj.Name))
-			end
-		end
-	end
-	return total
-end
-local function findAnySeedToolForEvo(evoName)
-	for _,obj in ipairs(backpack:GetChildren()) do
-		if isEvoSeedTool(obj) then
-			local name = canonicalEvoName(obj.Name)
-			if not isEvoIVByName(name) and name == evoName then
-				return obj
-			end
-		end
-	end
-	return nil
-end
-local function getGroundPositionXZ(x, z)
-	local origin = Vector3.new(x, 50, z)
-	local result = Workspace:Raycast(origin, Vector3.new(0, -200, 0), (function()
-		local p = RaycastParams.new(); p.FilterType = Enum.RaycastFilterType.Exclude; p.FilterDescendantsInstances = {character}; return p
-	end)())
-	if result then return Vector3.new(x, result.Position.Y + 0.01, z) end
-	return Vector3.new(x, 0.13552284240722656, z)
-end
-local function collectEvoGroups()
-	local map = {}
-	for _,obj in ipairs(backpack:GetChildren()) do
-		if isEvoSeedTool(obj) then
-			local evoName = canonicalEvoName(obj.Name)
-			if not isEvoIVByName(evoName) then
-				map[evoName] = (map[evoName] or 0) + math.max(1, parseCountFromToolName(obj.Name))
-			end
-		end
-	end
-	local groups = {}
-	for evoName,count in pairs(map) do table.insert(groups, {evoName=evoName, count=count}) end
-	table.sort(groups, function(a,b) return a.evoName < b.evoName end)
-	return groups
-end
-
--- Plant EVO Seeds (multi-passes + recap)
-local function safePlant(remote, pos, evoName)
-	if isEvoIVByName(evoName) then return false, "IV filtered" end
-	return pcall(function() remote:FireServer(pos, evoName) end)
-end
-local function processPlantEvoSeeds()
-	local plantRemote = findPlantRemote()
-	if not plantRemote then statusLbl.Text = "Remote Plant_RE introuvable."; flash(evoFrame,{80,30,30},{24,24,28}); return end
-	local hrp = getHRP(); if not hrp then statusLbl.Text = "HRP introuvable."; flash(evoFrame,{80,30,30},{24,24,28}); return end
-	local pos = getGroundPositionXZ(hrp.Position.X, hrp.Position.Z)
-
-	local initialGroups = collectEvoGroups()
-	if #initialGroups == 0 then statusLbl.Text = "Aucune EVO Seed (hors IV) dans le Backpack."; setRecap({}); flash(evoFrame,{80,30,30},{24,24,28}); return end
-	local totalInitial, totalPlanted, pass, maxPasses = 0, 0, 0, 6
-	for _,g in ipairs(initialGroups) do totalInitial = totalInitial + g.count end
-
-	while true do
-		pass = pass + 1
-		local passProgress = 0
-		local groups = collectEvoGroups()
-		if #groups == 0 then break end
-
-		for idx, g in ipairs(groups) do
-			local evoName = g.evoName
-			local remaining = countRemainingForEvo(evoName)
-			if remaining > 0 then
-				statusLbl.Text = ("[Pass %d] [%d/%d] %s — à planter: %d"):format(pass, idx, #groups, evoName, remaining)
-
-				local equipOK = false
-				for _=1,4 do
-					local tool = findAnySeedToolForEvo(evoName)
-					if not tool then break end
-					-- pas besoin d'équiper pour Plant_RE si serveur n'exige pas; on laisse la robustesse ici
-					equipOK = true
-					break
-				end
-
-				if not equipOK then
-					statusLbl.Text = ("[Pass %d] %s — introuvable, on continue. Reste: %d"):format(pass, evoName, remaining)
-				else
-					local plantedThis, noProgressStreak = 0, 0
-					while remaining > 0 do
-						local before = remaining
-						local okPlant, perr = safePlant(plantRemote, pos, evoName)
-						if okPlant and perr == nil then
-							pwait(0.10)
-							local after = countRemainingForEvo(evoName)
-							local delta = before - after
-							if delta > 0 then
-								plantedThis += delta; totalPlanted += delta; passProgress += delta; noProgressStreak = 0; remaining = after
-								statusLbl.Text = ("%s — plantés: %d | reste: %d"):format(evoName, plantedThis, remaining)
-							else noProgressStreak += 1; remaining = after end
-						else
-							if perr == "IV filtered" then statusLbl.Text = ("%s — IV détectée (sécurité), skip. Reste %d."):format(evoName, remaining); break end
-							noProgressStreak += 1
-						end
-						if noProgressStreak >= 5 then statusLbl.Text = ("%s — pas de progrès après 5 tentatives, on passe (reste %d)."):format(evoName, remaining); break end
-						pwait(0.08)
-					end
-				end
-			end
-		end
-
-		if passProgress <= 0 or pass >= maxPasses then break end
-	end
-
-	local leftoverGroups, totalLeft = {}, 0
-	for _,g in ipairs(collectEvoGroups()) do
-		if g.count > 0 then totalLeft += g.count; table.insert(leftoverGroups, {evoName=g.evoName, count=g.count}) end
-	end
-	setRecap(leftoverGroups)
-	statusLbl.Text = ("Plant terminé — initial: %d, plantés: %d, restants: %d."):format(totalInitial, totalPlanted, totalLeft)
-	if totalLeft == 0 then flash(evoFrame,{30,80,30},{24,24,28}) else flash(evoFrame,{80,30,30},{24,24,28}) end
-end
-
--- Planter uniquement Mushroom
-local function processPlantMushroomSeeds()
-	local plantRemote = findPlantRemote()
-	if not plantRemote then statusLbl.Text = "Remote Plant_RE introuvable."; flash(evoFrame,{80,30,30},{24,24,28}); return end
-	local hrp = getHRP(); if not hrp then statusLbl.Text = "HRP introuvable."; flash(evoFrame,{80,30,30},{24,24,28}); return end
-	local pos = getGroundPositionXZ(hrp.Position.X, hrp.Position.Z)
-
-	local totalPlanted, pass, maxPasses = 0, 0, 4
-	while pass < maxPasses do
-		pass += 1
-		local passProgress = 0
-		local groups = {}
-		for _, obj in ipairs(backpack:GetChildren()) do
-			if isEvoSeedTool(obj) then
-				local evoName = canonicalEvoName(obj.Name)
-				if not isEvoIVByName(evoName) and evoName:lower():find("mushroom",1,true) then
-					local cnt = countRemainingForEvo(evoName)
-					if cnt > 0 then table.insert(groups, {evoName=evoName, count=cnt}) end
-				end
-			end
-		end
-		if #groups == 0 then break end
-
-		for _, g in ipairs(groups) do
-			local evoName, remaining = g.evoName, g.count
-			statusLbl.Text = string.format("[Mushroom Pass %d] %s — restant: %d", pass, evoName, remaining)
-
-			local plantedThis, noProgressStreak = 0, 0
-			while remaining > 0 do
-				local before = remaining
-				local okPlant, perr = safePlant(plantRemote, pos, evoName)
-				if okPlant and perr == nil then
-					pwait(0.10)
-					local after = countRemainingForEvo(evoName)
-					local delta = before - after
-					if delta > 0 then
-						plantedThis += delta; totalPlanted += delta; passProgress += delta; noProgressStreak = 0; remaining = after
-						statusLbl.Text = string.format("%s — plantés: %d | reste: %d", evoName, plantedThis, remaining)
-					else noProgressStreak += 1; remaining = after end
-				else
-					if perr == "IV filtered" then statusLbl.Text = string.format("%s — IV détectée, skip. Reste %d.", evoName, remaining); break end
-					noProgressStreak += 1
-				end
-				if noProgressStreak >= 5 then statusLbl.Text = string.format("%s — pas de progrès après 5 tentatives.", evoName); break end
-				pwait(0.08)
-			end
-		end
-		if passProgress <= 0 then break end
-	end
-	statusLbl.Text = string.format("Plantation Mushroom terminée — plantés: %d", totalPlanted)
-	flash(evoFrame, {30, 80, 30}, {24, 24, 28})
-end
-
--- Toggle EVO
-local function toggleEvo()
-	evoFrame.Visible = not evoFrame.Visible
-	if evoFrame.Visible then
-		bubbleBtn.Visible = false
-		clampOnScreen(evoFrame)
-	end
-end
-
--- Switch en bulle
-local function showBubble()
-	evoFrame.Visible = false
-	bubbleBtn.Visible = true
-	clampOnScreen(bubbleBtn)
-end
-
--- Wire EVO MANAGER + raccourcis
-evoClose.MouseButton1Click:Connect(function() evoFrame.Visible=false end)
-toBubbleBtn.MouseButton1Click:Connect(showBubble)
-bubbleBtn.InputBegan:Connect(function(i)
-	if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
-		bubbleBtn.Visible=false
-		evoFrame.Visible=true
-		clampOnScreen(evoFrame)
-	end
-end)
-
-quickEvoBtn.MouseButton1Click:Connect(toggleEvo)
-evoManagerBtn.MouseButton1Click:Connect(toggleEvo)
-UserInputService.InputBegan:Connect(function(input, gp)
-	if gp then return end
-	if input.KeyCode == Enum.KeyCode.E and (UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt) or UserInputService:IsKeyDown(Enum.KeyCode.RightAlt)) then
-		toggleEvo()
-	elseif input.KeyCode == Enum.KeyCode.B and (UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt) or UserInputService:IsKeyDown(Enum.KeyCode.RightAlt)) then
-		if evoFrame.Visible then showBubble() else bubbleBtn.Visible=false; evoFrame.Visible=true; clampOnScreen(evoFrame) end
-	end
-end)
-
--- Boutons EVO
-rescanBtn.MouseButton1Click:Connect(function()
-	local groups = collectEvoGroups()
-	local total = 0; for _,g in ipairs(groups) do total += g.count end
-	statusLbl.Text = ("Scan EVO Seeds: %d type(s), total %d (IV exclues)."):format(#groups, total)
-	local leftover = {}
-	for _,g in ipairs(groups) do if g.count > 0 then table.insert(leftover, {evoName=g.evoName, count=g.count}) end end
-	setRecap(leftover)
-	if total>0 then flash(evoFrame,{30,80,30},{24,24,28}) else flash(evoFrame,{80,30,30},{24,24,28}) end
-end)
-submitBtn.MouseButton1Click:Connect(function()
-	submitBtn.AutoButtonColor=false; submitBtn.BackgroundColor3=Color3.fromRGB(90,90,110)
-	submitAllNow()
-	submitBtn.AutoButtonColor=true; submitBtn.BackgroundColor3=Color3.fromRGB(60,120,255)
-end)
-plantEvoBtn.MouseButton1Click:Connect(function()
-	plantEvoBtn.AutoButtonColor=false; plantEvoBtn.BackgroundColor3=Color3.fromRGB(90,110,90)
-	processPlantEvoSeeds()
-	plantEvoBtn.AutoButtonColor=true; plantEvoBtn.BackgroundColor3=Color3.fromRGB(50,160,90)
-end)
-plantMushroomBtn.MouseButton1Click:Connect(function()
-	plantMushroomBtn.AutoButtonColor=false; plantMushroomBtn.BackgroundColor3=Color3.fromRGB(130,90,130)
-	processPlantMushroomSeeds()
-	plantMushroomBtn.AutoButtonColor=true; plantMushroomBtn.BackgroundColor3=Color3.fromRGB(160,90,160)
-end)
-water4xBtn.MouseButton1Click:Connect(function()
-	water4xBtn.AutoButtonColor = false
-	water4xBtn.BackgroundColor3 = Color3.fromRGB(90, 110, 140)
-	water4xBtn.Text = "💦 ARROSAGE EN COURS..."
-	local ok = pcall(arroser4Fois)
-	if ok then statusLbl.Text = "✅ Arrosage 4 fois terminé !"; flash(evoFrame, {30, 80, 30}, {24, 24, 28})
-	else statusLbl.Text = "❌ Erreur lors de l'arrosage"; flash(evoFrame, {80, 30, 30}, {24, 24, 28}) end
-	water4xBtn.AutoButtonColor = true
-	water4xBtn.BackgroundColor3 = Color3.fromRGB(60, 140, 200)
-	water4xBtn.Text = "💦 ARROSER 4 FOIS à ma position (sol)"
-end)
-
--- Maj coord affichées en live
-task.spawn(function()
-	while evoFrame and evoFrame.Parent do
-		task.wait(0.2)
-		if evoFrame.Visible then
-			local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-			if hrp then
-				local p = hrp.Position
-				posLabel.Text = ("Pos: (%.2f, %.2f, %.2f) | Y sol auto"):format(p.X, p.Y, p.Z)
-			else
-				posLabel.Text = "Pos: (N/A)"
-			end
-		end
-	end
-end)
-
 -- =========== Anti-AFK ===========
 player.Idled:Connect(function()
 	pcall(function()
@@ -1437,7 +911,7 @@ antiAFKBtn.MouseButton1Click:Connect(function()
 		msg("🛡️ Anti-AFK activé (nudge périodique + VirtualUser).", Color3.fromRGB(180,230,180))
 	else
 		msg("🛡️ Anti-AFK désactivé.", Color3.fromRGB(230,200,180))
-		local hum = character and character:FindFirstChildOfClass("Humanoid")
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 		if hum then hum:Move(Vector3.new(0,0,0), true) end
 	end
 end)
@@ -1445,6 +919,7 @@ task.spawn(function()
 	while true do
 		task.wait(ANTI_AFK_PERIOD)
 		if antiAFKEnabled then
+			local character = player.Character
 			local hum = character and character:FindFirstChildOfClass("Humanoid")
 			if hum then
 				hum:Move(Vector3.new(0, 0, -1), true)
@@ -1465,9 +940,873 @@ player.CharacterAdded:Connect(function(char)
 	if isNoclipping then task.wait(0.2); toggleNoclip(nil); toggleNoclip(nil) end
 end)
 
--- ==== Auto-scale sur chaque GUI ====
+-- ==== Auto-scale ====
 applyAutoScale(screenGui, {mainFrame})
 applyAutoScale(gearGui,   {gearFrame})
-applyAutoScale(evoGui,    {evoFrame, bubbleBtn})
 
-msg("✅ Saad helper pack chargé — Submit ALL, EVO BUY x1 corrigé, autos mobiles (UIScale), timers auto -50%, récap & arrosage ok. (Alt+E pour ouvrir EVO, ● ou Alt+B pour bulle)", Color3.fromRGB(170,230,255))
+-- ===================================================================
+-- =====================  ACORN COLLECTOR UI  ========================
+-- ===================================================================
+local acornGui -- ScreenGui (créé à la première ouverture)
+local function ensureAcornGui()
+	if acornGui and acornGui.Parent then return acornGui end
+
+	local ac = {} -- namespace local
+
+	-- Config Chubby (109s) + Fever (30s)
+	ac.config = {
+		acornName = "Acorn",
+		normalSpawnInterval = 109,
+		feverSpawnInterval  = 30,
+		acornDuration       = 30,
+
+		feverGroundDistance = 6,
+		groundIgnoreHeight  = 20,
+		feverYTolerance     = 2,
+
+		instantTp = false,
+		tpSpeed   = 120,
+		returnToStartAfterCollect = true,
+
+		autoHarvestRadius   = 25,
+		autoHarvestTick     = 0.12,
+		autoHarvestSpamE    = false, -- prompts only
+		autoHarvestUsePrompts = true,
+		promptHoldDuration  = 0.25,  -- ← valeur v2.4
+
+		plantWhitelist = { "plant","harvest","crop","fruit","vegetable","tree","bush","flower","mushroom","pick","collect" },
+		promptTextWhitelist = { "harvest","pick","collect","récolter","cueillir" },
+		promptBlacklist = { "fence","save","slot","skin","shop","buy","sell","chest","settings","rename","open","claim","craft","upgrade" },
+
+		soundAlert = true,
+		screenAlert = true,
+	}
+
+	-- State
+	ac.nextSpawnTime = tick() + ac.config.normalSpawnInterval
+	ac.currentAcorn = nil
+	ac.autoCollecting = false
+	ac.autoTPOnDetect = true
+	ac.teleportBusy = false
+	ac.lastTeleportedAcorn = nil
+	ac.esp = {}
+
+	ac.isNuttyFever = false
+	ac.lastSpawnTimestamps = {}
+	ac.FEVER_INFER_WINDOW = 45
+	ac.FEVER_INFER_GAP    = 35
+	ac.feverLastSeenAt    = 0
+	ac.FEVER_TIMEOUT      = 180
+
+	ac.acornCollected = 0
+	ac.pendingCollect = {}
+
+	ac.scanAutoEnabled = false
+	ac.scanPeriod      = 29
+
+	-- Sounds
+	ac.alertSound = Instance.new("Sound")
+	ac.alertSound.SoundId = "rbxassetid://2767090"
+	ac.alertSound.Volume = 0.5
+	ac.alertSound.Parent = SoundService
+
+	-- Helpers
+	local function hardSetPosition(pos)
+		local char = player.Character
+		local hrp = getHRP()
+		if not hrp then return end
+		pcall(function()
+			hrp.AssemblyLinearVelocity = Vector3.new()
+			hrp.AssemblyAngularVelocity = Vector3.new()
+		end)
+		if char and typeof(char.PivotTo) == "function" then
+			char:PivotTo(CFrame.new(pos))
+		else
+			hrp.CFrame = CFrame.new(pos)
+		end
+	end
+
+	local function teleportTween(position)
+		local hrp = getHRP()
+		if not hrp or ac.teleportBusy then return end
+		ac.teleportBusy = true
+		if ac.config.instantTp then
+			hardSetPosition(position)
+			ac.teleportBusy = false
+			return
+		end
+		local startPos = hrp.Position
+		local distance = (position - startPos).Magnitude
+		local travelTime = math.max(distance / ac.config.tpSpeed, 0.05)
+		local tween = TweenService:Create(
+			hrp,
+			TweenInfo.new(travelTime, Enum.EasingStyle.Linear),
+			{CFrame = CFrame.new(position)}
+		)
+		tween:Play()
+		tween.Completed:Connect(function()
+			ac.teleportBusy = false
+		end)
+	end
+
+	local function isGrounded(acorn)
+		if not acorn or not acorn.Parent then return false, nil end
+		local origin = acorn.Position
+		local direction = Vector3.new(0, -200, 0)
+		local params = RaycastParams.new()
+		params.FilterDescendantsInstances = {acorn}
+		-- (Raycast pour info; pas critique pour auto-harvest)
+		if Enum.RaycastFilterType and Enum.RaycastFilterType.Exclude then
+			params.FilterType = Enum.RaycastFilterType.Exclude
+		end
+		params.IgnoreWater = false
+		local result = Workspace:Raycast(origin, direction, params)
+		if result then
+			local dist = (origin - result.Position).Magnitude
+			return dist <= ac.config.feverGroundDistance, dist
+		else
+			return false, nil
+		end
+	end
+
+	local function isYAlignedWithPlayer(acorn)
+		local hrp = getHRP()
+		if not hrp or not acorn then return false end
+		return math.abs(acorn.Position.Y - hrp.Position.Y) <= ac.config.feverYTolerance
+	end
+
+	local function createESP(acornPart)
+		if ac.esp[acornPart] then return end
+		local highlight = Instance.new("Highlight")
+		highlight.Name = "AcornESP"
+		highlight.Adornee = acornPart
+		highlight.FillColor = Color3.fromRGB(255, 200, 0)
+		highlight.FillTransparency = 0.4
+		highlight.OutlineColor = Color3.fromRGB(255, 200, 0)
+		highlight.OutlineTransparency = 0
+		highlight.Parent = acornPart
+
+		local billboard = Instance.new("BillboardGui")
+		billboard.Name = "AcornInfo"
+		billboard.Adornee = acornPart
+		billboard.Size = UDim2.new(0, 200, 0, 50)
+		billboard.StudsOffset = Vector3.new(0, 5, 0)
+		billboard.AlwaysOnTop = true
+		billboard.Parent = acornPart
+
+		local label = Instance.new("TextLabel")
+		label.Size = UDim2.new(1, 0, 1, 0)
+		label.BackgroundTransparency = 1
+		label.TextScaled = true
+		label.Font = Enum.Font.SourceSansBold
+		label.TextColor3 = Color3.fromRGB(255, 255, 255)
+		label.TextStrokeTransparency = 0
+		label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+		label.Parent = billboard
+
+		ac.esp[acornPart] = {highlight = highlight, billboard = billboard, label = label}
+
+		task.spawn(function()
+			while acornPart.Parent and ac.esp[acornPart] do
+				local hrp = getHRP()
+				if hrp then
+					local distance = (acornPart.Position - hrp.Position).Magnitude
+					local grounded = select(1, isGrounded(acornPart))
+					local yFlag = ac.isNuttyFever and (isYAlignedWithPlayer(acornPart) and " (Y✓)" or " (Y✗)") or ""
+					local gFlag = grounded and " (sol)" or ""
+					ac.esp[acornPart].label.Text = string.format("🌰 ACORN%s%s\n%.1fm", yFlag, gFlag, distance)
+					local pulse = math.sin(tick() * 4) * 0.2 + 0.25
+					highlight.FillTransparency = pulse
+				end
+				task.wait(0.1)
+			end
+		end)
+	end
+
+	local function cleanupESP(acornPart)
+		local e = ac.esp[acornPart]
+		if not e then return end
+		if e.highlight then e.highlight:Destroy() end
+		if e.billboard then e.billboard:Destroy() end
+		ac.esp[acornPart] = nil
+	end
+
+	-- UI counters
+	local acornCountLabel
+	local function setCount(n)
+		if acornCountLabel then
+			acornCountLabel.Text = ("🥜 Collected: %d"):format(n or 0)
+		end
+	end
+
+	-- Collect (TP dur -> collect -> retour)
+	local function collectAcorn(acornPart)
+		if not acornPart or not acornPart.Parent then return end
+		local hrp = getHRP()
+		if not hrp then return end
+		ac.pendingCollect[acornPart] = true
+
+		local originalPos = hrp.Position
+		hardSetPosition(acornPart.Position + Vector3.new(0,3,0))
+		task.wait(0.10)
+
+		pcall(function()
+			local hrp2 = getHRP()
+			if hrp2 then
+				firetouchinterest(hrp2, acornPart, 0)
+				task.wait(0.05)
+				firetouchinterest(hrp2, acornPart, 1)
+			end
+		end)
+		local prompt = acornPart:FindFirstChildOfClass("ProximityPrompt"); if prompt then pcall(fireproximityprompt, prompt) end
+		local click  = acornPart:FindFirstChildOfClass("ClickDetector");   if click  then pcall(fireclickdetector,  click)  end
+
+		task.wait(0.15)
+		if ac.config.returnToStartAfterCollect and originalPos then
+			hardSetPosition(originalPos)
+		end
+	end
+	ac._collectAcorn = collectAcorn
+
+	local function bestAcornCandidate(a, b)
+		if not a then return b end
+		if not b then return a end
+		local hrp = getHRP()
+		local da = hrp and (a.Position - hrp.Position).Magnitude or math.huge
+		local db = hrp and (b.Position - hrp.Position).Magnitude or math.huge
+		if ac.isNuttyFever then
+			local aY = isYAlignedWithPlayer(a)
+			local bY = isYAlignedWithPlayer(b)
+			if aY ~= bY then return aY and a or b end
+			local ag = select(1, isGrounded(a))
+			local bg = select(1, isGrounded(b))
+			if ag ~= bg then return ag and a or b end
+			return (da <= db) and a or b
+		else
+			return (da <= db) and a or b
+		end
+	end
+
+	local function onAcornDisappeared(inst)
+		if ac.currentAcorn and (inst == ac.currentAcorn or (ac.currentAcorn:IsDescendantOf(inst))) then
+			cleanupESP(ac.currentAcorn)
+			ac.currentAcorn = nil
+		end
+		if ac.pendingCollect[inst] then
+			ac.pendingCollect[inst] = nil
+			ac.acornCollected += 1
+			setCount(ac.acornCollected)
+		end
+	end
+
+	local function isAcornBasePart(inst)
+		if not inst then return nil end
+		if inst.Name ~= ac.config.acornName then return nil end
+		if inst:IsA("BasePart") then return inst end
+		if inst:IsA("Model") then
+			return inst:FindFirstChildWhichIsA("BasePart")
+		end
+		return nil
+	end
+
+	local function selectCurrentAcorn(candidate)
+		if not candidate or not candidate.Parent then return end
+		if not ac.currentAcorn or not ac.currentAcorn.Parent then
+			ac.currentAcorn = candidate
+			createESP(candidate)
+			return
+		end
+		local best = bestAcornCandidate(ac.currentAcorn, candidate)
+		if best ~= ac.currentAcorn then
+			cleanupESP(ac.currentAcorn)
+			ac.currentAcorn = best
+			createESP(best)
+		end
+	end
+
+	local function onAcornAppeared(bp)
+		if not bp or not bp.Parent then return end
+		-- heuristique fever
+		local t = tick()
+		table.insert(ac.lastSpawnTimestamps, t)
+		local keep = {}
+		for _, ts in ipairs(ac.lastSpawnTimestamps) do
+			if t - ts <= ac.FEVER_INFER_WINDOW then table.insert(keep, ts) end
+		end
+		ac.lastSpawnTimestamps = keep
+		if #ac.lastSpawnTimestamps >= 2 then
+			local n = #ac.lastSpawnTimestamps
+			local gap = ac.lastSpawnTimestamps[n] - ac.lastSpawnTimestamps[n-1]
+			if gap <= ac.FEVER_INFER_GAP then
+				ac.isNuttyFever = true
+				ac.feverLastSeenAt = tick()
+			end
+		end
+		ac.feverLastSeenAt = tick()
+		ac.nextSpawnTime = tick() + (ac.isNuttyFever and ac.config.feverSpawnInterval or ac.config.normalSpawnInterval)
+
+		-- Filtres
+		if ac.isNuttyFever and not isYAlignedWithPlayer(bp) then return end
+		if ac.isNuttyFever then
+			local grounded = select(1, isGrounded(bp))
+			if (not grounded) and (bp.Position.Y > ac.config.groundIgnoreHeight) then return end
+		end
+
+		if ac.config.soundAlert then ac.alertSound:Play() end
+		if ac.config.screenAlert then
+			StarterGui:SetCore("SendNotification", {
+				Title = "🌰 ACORN SPAWNED" .. (ac.isNuttyFever and " (Fever)" or ""),
+				Text = ac.isNuttyFever and ("Aligné Y±"..tostring(ac.config.feverYTolerance).." requis") or "Mode normal",
+				Duration = 3,
+				Icon = "rbxassetid://7733992358"
+			})
+		end
+
+		selectCurrentAcorn(bp)
+
+		if ac.autoTPOnDetect and ac.lastTeleportedAcorn ~= ac.currentAcorn and ac.currentAcorn then
+			ac.lastTeleportedAcorn = ac.currentAcorn
+			task.delay(0.12, function()
+				if ac.currentAcorn and ac.currentAcorn.Parent then
+					ac._collectAcorn(ac.currentAcorn)
+				end
+			end)
+		end
+
+		task.spawn(function()
+			local ref = bp
+			local start = tick()
+			while ref.Parent and (tick() - start) < (ac.config.acornDuration + 5) do
+				task.wait(0.25)
+			end
+			if ac.currentAcorn == ref then
+				cleanupESP(ref)
+				ac.currentAcorn = nil
+			end
+		end)
+	end
+
+	-- === Hooks spawn/despawn + Scan Y∈[1;4] ===
+	Workspace.DescendantAdded:Connect(function(inst)
+		local bp = isAcornBasePart(inst)
+		if bp then
+			-- Si dans la fenêtre d'intérêt Y, on traite en priorité
+			if bp.Position.Y >= 1 and bp.Position.Y <= 4 then
+				onAcornAppeared(bp)
+			else
+				onAcornAppeared(bp)
+			end
+		end
+	end)
+	Workspace.DescendantRemoving:Connect(onAcornDisappeared)
+
+	-- Scan map: meilleur acorn avec Y∈[1;4]
+	local function bestAcornCandidateWrap(a, b) return bestAcornCandidate(a, b) end
+	local function scanMapAcorn()
+		local best = nil
+		for _, obj in ipairs(Workspace:GetDescendants()) do
+			local bp = isAcornBasePart(obj)
+			if bp then
+				local y = bp.Position.Y
+				if y >= 1 and y <= 4 then
+					best = bestAcornCandidateWrap(best, bp)
+				end
+			end
+		end
+		if best then
+			onAcornAppeared(best)
+			return true, best
+		end
+		return false, nil
+	end
+
+	local function initialScan()
+		local ok, found = scanMapAcorn()
+		if not ok then
+			local best = nil
+			for _, obj in ipairs(Workspace:GetDescendants()) do
+				local bp = isAcornBasePart(obj)
+				if bp then best = bestAcornCandidateWrap(best, bp) end
+			end
+			if best then onAcornAppeared(best) end
+		end
+	end
+
+	-- =================== AUTO HARVEST (version v2.4) ===================
+	ac.autoHarvestEnabled = false
+
+	local function lowerOrEmpty(s) if typeof(s)=="string" then return string.lower(s) end return "" end
+	local function isPlantPrompt(prompt)
+		if not prompt or not prompt.Parent then return false end
+		local action = lowerOrEmpty(prompt.ActionText)
+		local object = lowerOrEmpty(prompt.ObjectText)
+		for _, kw in ipairs(ac.config.promptTextWhitelist) do
+			if action:find(kw) or object:find(kw) then return true end
+		end
+		local node = prompt
+		local steps = 0
+		while node and steps < 4 do
+			local name = lowerOrEmpty(node.Name)
+			for _, bad in ipairs(ac.config.promptBlacklist) do if name:find(bad) then return false end end
+			for _, good in ipairs(ac.config.plantWhitelist) do if name:find(good) then return true end end
+			node = node.Parent; steps += 1
+		end
+		return false
+	end
+
+	local function makeOverlapParamsExcludeCharacter()
+		local params = OverlapParams.new()
+		params.FilterDescendantsInstances = {player.Character}
+		-- Compat API: Blacklist (ancien) sinon Exclude (nouveau)
+		if Enum.RaycastFilterType and Enum.RaycastFilterType.Blacklist then
+			params.FilterType = Enum.RaycastFilterType.Blacklist
+		else
+			params.FilterType = Enum.RaycastFilterType.Exclude
+		end
+		return params
+	end
+
+	local function getNearbyPlantPrompts(radius)
+		local prompts = {}
+		local hrp = getHRP(); if not hrp then return prompts end
+
+		local params = makeOverlapParamsExcludeCharacter()
+		local parts = {}
+		pcall(function() parts = Workspace:GetPartBoundsInRadius(hrp.Position, radius, params) end)
+
+		local seenParents = {}
+		for _, part in ipairs(parts) do
+			if part and part.Parent and not seenParents[part.Parent] then
+				seenParents[part.Parent] = true
+				for _, child in ipairs(part.Parent:GetDescendants()) do
+					if child:IsA("ProximityPrompt") and isPlantPrompt(child) then
+						table.insert(prompts, child)
+					end
+				end
+			end
+		end
+
+		-- Fallback léger si la sphère ne retourne rien
+		if #prompts == 0 then
+			for _, prompt in ipairs(Workspace:GetDescendants()) do
+				if prompt:IsA("ProximityPrompt") and isPlantPrompt(prompt) then
+					local root = prompt.Parent
+					local posPart = root and root:IsA("BasePart") and root or (root and root:FindFirstChildWhichIsA("BasePart"))
+					local h = getHRP()
+					if posPart and h and (posPart.Position - h.Position).Magnitude <= radius then
+						table.insert(prompts, prompt)
+					end
+				end
+			end
+		end
+		return prompts
+	end
+
+	task.spawn(function()
+		while true do
+			if ac.autoHarvestEnabled then
+				if ac.config.autoHarvestUsePrompts then
+					local prompts = getNearbyPlantPrompts(ac.config.autoHarvestRadius)
+					for _, prompt in ipairs(prompts) do
+						-- tir v2.4: appui + mini-hold si requis, puis relance
+						pcall(fireproximityprompt, prompt)
+						if prompt.HoldDuration and prompt.HoldDuration > 0 then
+							task.wait(math.min(prompt.HoldDuration, ac.config.promptHoldDuration))
+							pcall(fireproximityprompt, prompt)
+						end
+					end
+				end
+				if ac.config.autoHarvestSpamE then
+					VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+					task.wait(0.03)
+					VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+				end
+				task.wait(ac.config.autoHarvestTick)
+			else
+				task.wait(0.2)
+			end
+		end
+	end)
+	-- =================== FIN AUTO HARVEST v2.4 ===================
+
+	-- ================ UI ================
+	acornGui = Instance.new("ScreenGui")
+	acornGui.Name = "AcornCollectorGUI"
+	acornGui.ResetOnSpawn = false
+	acornGui.IgnoreGuiInset = false -- ✅
+	acornGui.Enabled = true
+	acornGui.Parent = playerGui
+
+	local MainFrame = Instance.new("Frame")
+	MainFrame.Size = UDim2.new(0, 340, 0, 560)
+	MainFrame.Position = UDim2.new(1, -350, 0.5, -280)
+	MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+	MainFrame.BorderSizePixel = 0
+	MainFrame.Parent = acornGui
+	rounded(MainFrame, 12)
+
+	local Header = Instance.new("Frame")
+	Header.Size = UDim2.new(1, 0, 0, 45)
+	Header.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
+	Header.BorderSizePixel = 0
+	Header.Parent = MainFrame
+	rounded(Header, 12)
+
+	local Title = Instance.new("TextLabel")
+	Title.Text = "🌰 Acorn Auto Collector"
+	Title.Size = UDim2.new(1, -50, 1, 0)
+	Title.Position = UDim2.new(0, 15, 0, 0)
+	Title.BackgroundTransparency = 1
+	Title.Font = Enum.Font.SourceSansBold
+	Title.TextColor3 = Color3.fromRGB(255, 200, 0)
+	Title.TextSize = 20
+	Title.TextXAlignment = Enum.TextXAlignment.Left
+	Title.Parent = Header
+
+	local CloseButton = Instance.new("TextButton")
+	CloseButton.Text = "✖"
+	CloseButton.Size = UDim2.new(0, 35, 0, 35)
+	CloseButton.Position = UDim2.new(1, -40, 0.5, -17.5)
+	CloseButton.BackgroundColor3 = Color3.fromRGB(220, 50, 50)
+	CloseButton.BorderSizePixel = 0
+	CloseButton.Font = Enum.Font.SourceSansBold
+	CloseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+	CloseButton.TextSize = 20
+	CloseButton.Parent = Header
+	rounded(CloseButton, 8)
+
+	local Container = Instance.new("Frame")
+	Container.Size = UDim2.new(1, -20, 1, -55)
+	Container.Position = UDim2.new(0, 10, 0, 50)
+	Container.BackgroundTransparency = 1
+	Container.Parent = MainFrame
+
+	local TimerFrame = Instance.new("Frame")
+	TimerFrame.Size = UDim2.new(1, 0, 0, 110)
+	TimerFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 42)
+	TimerFrame.BorderSizePixel = 0
+	TimerFrame.Parent = Container
+	rounded(TimerFrame,10)
+
+	local TimerLabel = Instance.new("TextLabel")
+	TimerLabel.Size = UDim2.new(1, -20, 0, 30)
+	TimerLabel.Position = UDim2.new(0, 10, 0, 5)
+	TimerLabel.BackgroundTransparency = 1
+	TimerLabel.Font = Enum.Font.SourceSansBold
+	TimerLabel.Text = "⏱️ Prochain spawn (Chubby):"
+	TimerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	TimerLabel.TextSize = 18
+	TimerLabel.TextXAlignment = Enum.TextXAlignment.Left
+	TimerLabel.Parent = TimerFrame
+
+	local CountdownLabel = Instance.new("TextLabel")
+	CountdownLabel.Size = UDim2.new(0.5, -10, 0, 40)
+	CountdownLabel.Position = UDim2.new(0, 10, 0, 40)
+	CountdownLabel.BackgroundTransparency = 1
+	CountdownLabel.Font = Enum.Font.SourceSans
+	CountdownLabel.Text = "01:49"
+	CountdownLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
+	CountdownLabel.TextSize = 30
+	CountdownLabel.TextXAlignment = Enum.TextXAlignment.Center
+	CountdownLabel.Parent = TimerFrame
+
+	acornCountLabel = Instance.new("TextLabel")
+	acornCountLabel.Size = UDim2.new(0.5, -10, 0, 40)
+	acornCountLabel.Position = UDim2.new(0.5, 0, 0, 40)
+	acornCountLabel.BackgroundTransparency = 1
+	acornCountLabel.Font = Enum.Font.SourceSansBold
+	acornCountLabel.Text = "🥜 Collected: 0"
+	acornCountLabel.TextColor3 = Color3.fromRGB(180, 230, 180)
+	acornCountLabel.TextSize = 20
+	acornCountLabel.TextXAlignment = Enum.TextXAlignment.Center
+	acornCountLabel.Parent = TimerFrame
+
+	local StatusFrame = Instance.new("Frame")
+	StatusFrame.Size = UDim2.new(1, 0, 0, 60)
+	StatusFrame.Position = UDim2.new(0, 0, 0, 120)
+	StatusFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 42)
+	StatusFrame.BorderSizePixel = 0
+	StatusFrame.Parent = Container
+	rounded(StatusFrame,10)
+
+	local StatusLabel = Instance.new("TextLabel")
+	StatusLabel.Size = UDim2.new(1, -20, 1, -10)
+	StatusLabel.Position = UDim2.new(0, 10, 0, 5)
+	StatusLabel.BackgroundTransparency = 1
+	StatusLabel.Font = Enum.Font.SourceSans
+	StatusLabel.Text = "📍 Status: En veille..."
+	StatusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+	StatusLabel.TextSize = 16
+	StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+	StatusLabel.TextYAlignment = Enum.TextYAlignment.Top
+	StatusLabel.TextWrapped = true
+	StatusLabel.Parent = StatusFrame
+
+	-- Boutons
+	local AutoCollectBtn = Instance.new("TextButton")
+	AutoCollectBtn.Size = UDim2.new(1, 0, 0, 45)
+	AutoCollectBtn.Position = UDim2.new(0, 0, 0, 190)
+	AutoCollectBtn.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+	AutoCollectBtn.BorderSizePixel = 0
+	AutoCollectBtn.Text = "🤖 Auto Collect: OFF"
+	AutoCollectBtn.Font = Enum.Font.SourceSansBold
+	AutoCollectBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	AutoCollectBtn.TextSize = 18
+	AutoCollectBtn.Parent = Container
+	rounded(AutoCollectBtn,10)
+
+	local AutoTPBtn = Instance.new("TextButton")
+	AutoTPBtn.Size = UDim2.new(1, 0, 0, 45)
+	AutoTPBtn.Position = UDim2.new(0, 0, 0, 245)
+	AutoTPBtn.BackgroundColor3 = Color3.fromRGB(60, 200, 60)
+	AutoTPBtn.BorderSizePixel = 0
+	AutoTPBtn.Text = "⚡ Auto TP on Detect: ON"
+	AutoTPBtn.Font = Enum.Font.SourceSansBold
+	AutoTPBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	AutoTPBtn.TextSize = 18
+	AutoTPBtn.Parent = Container
+	rounded(AutoTPBtn,10)
+
+	local AutoHarvestBtn = Instance.new("TextButton")
+	AutoHarvestBtn.Size = UDim2.new(1, 0, 0, 45)
+	AutoHarvestBtn.Position = UDim2.new(0, 0, 0, 300)
+	AutoHarvestBtn.BackgroundColor3 = Color3.fromRGB(200, 120, 60)
+	AutoHarvestBtn.BorderSizePixel = 0
+	AutoHarvestBtn.Text = "🌾 Auto Harvest (plantes): OFF"
+	AutoHarvestBtn.Font = Enum.Font.SourceSansBold
+	AutoHarvestBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	AutoHarvestBtn.TextSize = 18
+	AutoHarvestBtn.Parent = Container
+	rounded(AutoHarvestBtn,10)
+
+	local FeverBadge = Instance.new("TextLabel")
+	FeverBadge.Size = UDim2.new(1, 0, 0, 35)
+	FeverBadge.Position = UDim2.new(0, 0, 0, 355)
+	FeverBadge.BackgroundColor3 = Color3.fromRGB(45, 40, 20)
+	FeverBadge.BorderSizePixel = 0
+	FeverBadge.Font = Enum.Font.SourceSansBold
+	FeverBadge.Text = "🔥 Nutty Fever: OFF (109s)"
+	FeverBadge.TextColor3 = Color3.fromRGB(255, 180, 80)
+	FeverBadge.TextSize = 18
+	FeverBadge.Parent = Container
+	rounded(FeverBadge,10)
+
+	local HintCtrl = Instance.new("TextLabel")
+	HintCtrl.Size = UDim2.new(1, 0, 0, 30)
+	HintCtrl.Position = UDim2.new(0, 0, 0, 395)
+	HintCtrl.BackgroundTransparency = 1
+	HintCtrl.Font = Enum.Font.SourceSansItalic
+	HintCtrl.Text = "💡 Maintiens ⌘ Command (Mac) ou Ctrl et clique pour te TP"
+	HintCtrl.TextColor3 = Color3.fromRGB(160, 200, 255)
+	HintCtrl.TextSize = 16
+	HintCtrl.Parent = Container
+
+	-- Scanner
+	local ScanRow = Instance.new("Frame")
+	ScanRow.Size = UDim2.new(1, 0, 0, 45)
+	ScanRow.Position = UDim2.new(0, 0, 0, 435)
+	ScanRow.BackgroundTransparency = 1
+	ScanRow.Parent = Container
+
+	local ScanNowBtn = Instance.new("TextButton")
+	ScanNowBtn.Size = UDim2.new(0.48, -4, 1, 0)
+	ScanNowBtn.Position = UDim2.new(0, 0, 0, 0)
+	ScanNowBtn.BackgroundColor3 = Color3.fromRGB(90, 140, 210)
+	ScanNowBtn.TextColor3 = Color3.fromRGB(255,255,255)
+	ScanNowBtn.Text = "🔎 Scan Now (Y 1–4)"
+	ScanNowBtn.Font = Enum.Font.SourceSansBold
+	ScanNowBtn.TextSize = 16
+	ScanNowBtn.Parent = ScanRow
+	rounded(ScanNowBtn,10)
+
+	local AutoScanBtn = Instance.new("TextButton")
+	AutoScanBtn.Size = UDim2.new(0.52, 0, 1, 0)
+	AutoScanBtn.Position = UDim2.new(0.48, 4, 0, 0)
+	AutoScanBtn.BackgroundColor3 = Color3.fromRGB(80, 100, 140)
+	AutoScanBtn.TextColor3 = Color3.fromRGB(255,255,255)
+	AutoScanBtn.Text = "📡 Auto-scan: OFF (29s)"
+	AutoScanBtn.Font = Enum.Font.SourceSansBold
+	AutoScanBtn.TextSize = 16
+	AutoScanBtn.Parent = ScanRow
+	rounded(AutoScanBtn,10)
+
+	-- Close → cache l'UI
+	CloseButton.MouseButton1Click:Connect(function()
+		acornGui.Enabled = false
+	end)
+
+	-- Toggles
+	AutoCollectBtn.MouseButton1Click:Connect(function()
+		ac.autoCollecting = not ac.autoCollecting
+		AutoCollectBtn.BackgroundColor3 = ac.autoCollecting and Color3.fromRGB(60, 200, 60) or Color3.fromRGB(200, 60, 60)
+		AutoCollectBtn.Text = ac.autoCollecting and "🤖 Auto Collect: ON" or "🤖 Auto Collect: OFF"
+	end)
+
+	AutoTPBtn.MouseButton1Click:Connect(function()
+		ac.autoTPOnDetect = not ac.autoTPOnDetect
+		AutoTPBtn.BackgroundColor3 = ac.autoTPOnDetect and Color3.fromRGB(60, 200, 60) or Color3.fromRGB(200, 60, 60)
+		AutoTPBtn.Text = ac.autoTPOnDetect and "⚡ Auto TP on Detect: ON" or "⚡ Auto TP on Detect: OFF"
+	end)
+
+	AutoHarvestBtn.MouseButton1Click:Connect(function()
+		ac.autoHarvestEnabled = not ac.autoHarvestEnabled
+		AutoHarvestBtn.BackgroundColor3 = ac.autoHarvestEnabled and Color3.fromRGB(100, 180, 80) or Color3.fromRGB(200, 120, 60)
+		AutoHarvestBtn.Text = ac.autoHarvestEnabled and ("🌾 Auto Harvest (plantes): ON  • r="..tostring(ac.config.autoHarvestRadius)) or "🌾 Auto Harvest (plantes): OFF"
+	end)
+
+	ScanNowBtn.MouseButton1Click:Connect(function()
+		local ok, part = scanMapAcorn()
+		if ok and part then
+			StarterGui:SetCore("SendNotification", {
+				Title = "🔎 Scan",
+				Text = ("Acorn trouvé à Y=%.1f"):format(part.Position.Y),
+				Duration = 2
+			})
+			selectCurrentAcorn(part)
+			if ac.autoTPOnDetect then
+				task.spawn(function() ac._collectAcorn(part) end)
+			end
+		else
+			StarterGui:SetCore("SendNotification", { Title = "🔎 Scan", Text = "Aucun acorn (Y 1–4) trouvé.", Duration = 2 })
+		end
+	end)
+
+	AutoScanBtn.MouseButton1Click:Connect(function()
+		ac.scanAutoEnabled = not ac.scanAutoEnabled
+		AutoScanBtn.BackgroundColor3 = ac.scanAutoEnabled and Color3.fromRGB(110, 150, 90) or Color3.fromRGB(80, 100, 140)
+		AutoScanBtn.Text = ac.scanAutoEnabled and "📡 Auto-scan: ON (29s)" or "📡 Auto-scan: OFF (29s)"
+	end)
+
+	-- Drag
+	makeDraggable(MainFrame, Header)
+
+	-- Timer / status updater
+	task.spawn(function()
+		while acornGui and acornGui.Parent do
+			if not acornGui.Enabled then task.wait(0.2) else
+				local timeLeft = ac.nextSpawnTime - tick()
+				if timeLeft > 0 then
+					CountdownLabel.TextColor3 = ac.isNuttyFever and Color3.fromRGB(255, 200, 120) or Color3.fromRGB(255, 200, 0)
+					CountdownLabel.Text = fmtTime(timeLeft)
+				else
+					CountdownLabel.Text = "SPAWN ?"
+				end
+				if ac.currentAcorn and ac.currentAcorn.Parent then
+					StatusLabel.Text = "📍 Status: ACORN détecté — "..(ac.isNuttyFever and "priorité sol + Y±"..ac.config.feverYTolerance or "mode normal")
+					StatusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+				else
+					StatusLabel.Text = "📍 Status: En veille / évènementiel"
+					StatusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+				end
+				FeverBadge.Text = (ac.isNuttyFever and "🔥 Nutty Fever: ON (30s)") or "🔥 Nutty Fever: OFF (109s)"
+				FeverBadge.BackgroundColor3 = ac.isNuttyFever and Color3.fromRGB(70, 45, 20) or Color3.fromRGB(45, 40, 20)
+				task.wait(0.1)
+			end
+		end
+	end)
+
+	-- CTRL/⌘ + Clic pour TP/Collect
+	do
+		local mouse = player:GetMouse()
+		local function metaOrCtrlDown()
+			return UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
+				or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
+				or UserInputService:IsKeyDown(Enum.KeyCode.LeftMeta)   -- ⌘ (Mac)
+				or UserInputService:IsKeyDown(Enum.KeyCode.RightMeta)  -- ⌘ (Mac)
+		end
+		mouse.Button1Down:Connect(function()
+			if metaOrCtrlDown() then
+				local target = mouse.Target
+				if target then
+					if target.Name == ac.config.acornName then
+						ac._collectAcorn(target)
+					else
+						local hit = mouse.Hit
+						if hit then
+							local p = hit.Position + Vector3.new(0,3,0)
+							if ac.config.instantTp then hardSetPosition(p) else teleportTween(p) end
+						end
+					end
+				end
+			end
+		end)
+	end
+
+	-- Auto-scan worker (29s)
+	task.spawn(function()
+		while acornGui and acornGui.Parent do
+			if ac.scanAutoEnabled then
+				local ok, part = scanMapAcorn()
+				if ok and part and (not ac.currentAcorn or ac.currentAcorn ~= part) then
+					selectCurrentAcorn(part)
+					if ac.autoTPOnDetect then task.spawn(function() ac._collectAcorn(part) end) end
+				end
+				for i=1, ac.scanPeriod do
+					if not ac.scanAutoEnabled then break end
+					task.wait(1)
+				end
+			else
+				task.wait(0.2)
+			end
+		end
+	end)
+
+	-- Fever flags externes (si existants)
+	local function tryBindExternalFeverFlags()
+		local function consider(inst)
+			if inst:IsA("BoolValue") then
+				local nm = string.lower(inst.Name)
+				if nm:find("nutty") or nm:find("fever") then
+					inst.Changed:Connect(function()
+						local active = inst.Value == true
+						if ac.isNuttyFever ~= active then
+							ac.isNuttyFever = active
+							ac.feverLastSeenAt = tick()
+							ac.nextSpawnTime = tick() + (ac.isNuttyFever and ac.config.feverSpawnInterval or ac.config.normalSpawnInterval)
+						end
+					end)
+				end
+			end
+		end
+		for _, container in ipairs({ReplicatedStorage, Workspace}) do
+			for _, inst in ipairs(container:GetDescendants()) do consider(inst) end
+			container.DescendantAdded:Connect(consider)
+		end
+	end
+
+	task.spawn(function()
+		while true do
+			if ac.isNuttyFever and (tick() - ac.feverLastSeenAt) > ac.FEVER_TIMEOUT then
+				ac.isNuttyFever = false
+			end
+			task.wait(2)
+		end
+	end)
+
+	initialScan()
+	tryBindExternalFeverFlags()
+	setCount(ac.acornCollected)
+
+	StarterGui:SetCore("SendNotification", {
+		Title = "🌰 Acorn Collector",
+		Text = "TP dur + retour XYZ • Timer 1:49 (Chubby) • ⌘/Ctrl+clic TP • Auto-scan 29s (Y 1–4)",
+		Duration = 4
+	})
+
+	applyAutoScale(acornGui, {MainFrame})
+	return acornGui
+end
+
+-- Toggle UI Acorn depuis le Player Tuner
+local function toggleAcornUI()
+	local gui = ensureAcornGui()
+	gui.Enabled = not gui.Enabled
+	if gui.Enabled then
+		local frame = gui:FindFirstChildWhichIsA("Frame")
+		if frame then clampOnScreen(frame) end
+	end
+end
+openAcornBtn.MouseButton1Click:Connect(toggleAcornUI)
+
+-- === Scales + ready msg ===
+msg("✅ Saad helper pack chargé + 🌰 Acorn Collector v2.6 (auto-harvest v2.4 • ⌘/Ctrl+clic • auto-scan 29s • Y 1–4).", Color3.fromRGB(170,230,255))
