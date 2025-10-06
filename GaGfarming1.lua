@@ -1,12 +1,9 @@
--- Saad helper pack v3.0-LITE + Acorn Collector v2.6-L
--- Ciblé smartphone (moins de mémoire/CPU)
--- ✂️ Changes clé :
--- - LIGHT_MODE = true : pas de notifications écran, pas de sons, pas d'ESP
--- - Refresh plus lents (UI ~0.6s, coords ~1s, scan auto 33s)
--- - Auto-harvest tick plus long (0.2s) et anti-spam
--- - Aucune pulsation/tween coûteux en continu
--- - Caméra gelée au TP conservée (restauration robuste)
--- - "Mushroom" exclu du harvest ; stop harvest si backpack plein
+-- Saad helper pack v3.0-LITE+AUTO — Player Tuner + Gear Panel + Acorn Collector
+-- ⚙️ Modifs demandées :
+-- 1) ✅ Auto-buy activé d’office au lancement (sans UI) : Seeds, Gear, Event EVO, Eggs (périodes: 2:30 / 2:30 / 0:55 / 7:30)
+-- 2) ✅ Bouton de réduction (minimize) pour : Player Tuner, Gear Panel, Acorn Collector
+-- 3) ✅ LITE optimisé mobile : no notifs écran, no son, pas d’ESP/pulsations, refresh allégé
+-- 4) ✅ Auto-harvest (plantes) ignore Mushroom + stop si backpack plein + TP discret caméra figée
 
 --==================================================
 --=================  SETTINGS  =====================
@@ -18,8 +15,18 @@ local COORDS_REFRESH = 1.0              -- coords HUD (s)
 local AUTO_SCAN_PERIOD = 33             -- auto-scan (sec) (29 -> 33 allégé)
 local AUTO_HARVEST_TICK = 0.20          -- v2.4 mais allégé (0.12 -> 0.20)
 local DISABLE_SOUNDS = true             -- pas de sons
-local DISABLE_ESP = true                -- pas de Highlight/Billboard acorn
+local DISABLE_ESP = true                -- pas d'ESP
 local GC_SWEEP_EVERY = 60               -- collecte mémoire périodique (sec)
+
+-- Auto-buy (sans UI) — activé d’office
+local AUTO_PERIOD_SEEDS = 150           -- 2:30
+local AUTO_PERIOD_GEAR  = 150           -- 2:30
+local AUTO_PERIOD_EVENT = 55            -- 0:55
+local AUTO_PERIOD_EGGS  = 450           -- 7:30
+local AUTO_BUY_SEEDS = true
+local AUTO_BUY_GEAR  = true
+local AUTO_BUY_EVENT = true
+local AUTO_BUY_EGGS  = true
 
 --==================================================
 --=================  SERVICES  =====================
@@ -53,10 +60,6 @@ local function msg(text, color)
 	end)
 end
 
-local function notify(_) -- désactivé en LIGHT_MODE
-	-- no-op pour éviter les notifications mobiles
-end
-
 local function safeWait(path, timeout)
 	local node=ReplicatedStorage
 	for _,name in ipairs(path) do
@@ -78,7 +81,7 @@ local function fmtTime(sec)
 	return string.format("%d:%02d",m,s)
 end
 
--- Petit helper UI
+-- UI helpers
 local function rounded(obj, r)
 	local ui = Instance.new("UICorner")
 	ui.CornerRadius = UDim.new(0, r or 8)
@@ -97,6 +100,48 @@ local function clampOnScreen(frame)
 		local py = math.clamp(frame.AbsolutePosition.Y, 0, math.max(0, vp.Y - abs.Y))
 		frame.Position = UDim2.fromOffset(px, py)
 	end)
+end
+
+local function makeButton(parent, text, size, pos, bg)
+	local b = Instance.new("TextButton")
+	b.Size = size; b.Position = pos
+	b.BackgroundColor3 = bg or Color3.fromRGB(70,100,180)
+	b.TextColor3 = Color3.fromRGB(255,255,255)
+	b.Text = text; b.Font = Enum.Font.GothamBold; b.TextSize = 13
+	b.Parent = parent; rounded(b,8)
+	return b
+end
+local function makeLabel(parent, text, size, pos, color, bold)
+	local l = Instance.new("TextLabel"); l.Size=size; l.Position=pos
+	l.BackgroundTransparency = 1; l.TextColor3 = color or Color3.fromRGB(220,230,255)
+	l.Font = bold and Enum.Font.GothamBold or Enum.Font.Gotham
+	l.TextSize = bold and 16 or 12; l.Text = text; l.TextXAlignment=Enum.TextXAlignment.Left
+	l.Parent = parent; return l
+end
+local function makeFrame(parent, size, pos, bg)
+	local f=Instance.new("Frame"); f.Size=size; f.Position=pos; f.BackgroundColor3=bg or Color3.fromRGB(36,36,36); f.BorderSizePixel=0; f.Parent=parent; rounded(f,10); return f
+end
+local function attachMinimize(frame, titleBar, contentFrame, minBtn, fullSize, collapsedHeight)
+	local isMin = false
+	local collapsedSize = UDim2.new(fullSize.X.Scale, fullSize.X.Offset, 0, collapsedHeight)
+	local function setMin(v)
+		isMin = v
+		if isMin then
+			contentFrame.Visible = false
+			frame.Size = collapsedSize
+			minBtn.Text = "▣"
+		else
+			frame.Size = fullSize
+			contentFrame.Visible = true
+			minBtn.Text = "—"
+		end
+	end
+	minBtn.MouseButton1Click:Connect(function() setMin(not isMin) end)
+	titleBar.InputBegan:Connect(function(i)
+		-- double-tap/two quick taps on mobile could also minimize; keep simple: single tap on btn only
+	end)
+	setMin(false)
+	return setMin
 end
 
 --==================================================
@@ -152,7 +197,7 @@ task.spawn(function()
 end)
 
 --==================================================
---=================  GEAR PANEL  ===================
+--=================  GEAR / REMOTES  ===============
 --==================================================
 local GEAR_SHOP_POS = Vector3.new(-288, 2, -15)
 local SELL_NPC_POS  = Vector3.new(87, 3, 0)
@@ -180,17 +225,16 @@ local GEARS = { "Watering Can","Trading Ticket","Trowel","Recall Wrench","Basic 
 local EGGS  = { "Common Egg","Uncommon Egg","Rare Egg","Legendary Egg","Mythical Egg","Bug Egg","Jungle Egg" }
 local MAX_TRIES_PER_SEED, MAX_TRIES_PER_GEAR = 20, 5
 
-local function pwait(t) task.wait(t) end
 local function buyAllSeedsWorker()
 	local r = getBuySeedRemote(); if not r then msg("❌ BuySeedStock introuvable."); return end
 	for _, seed in ipairs(SEEDS) do
-		for i=1,MAX_TRIES_PER_SEED do pcall(function() r:FireServer(SEED_TIER, seed) end) task.wait(0.05) end
+		for _=1,MAX_TRIES_PER_SEED do pcall(function() r:FireServer(SEED_TIER, seed) end) task.wait(0.05) end
 	end
 end
 local function buyAllGearWorker()
 	local r = getBuyGearRemote(); if not r then msg("❌ BuyGearStock introuvable."); return end
 	for _, g in ipairs(GEARS) do
-		for i=1,MAX_TRIES_PER_GEAR do pcall(function() r:FireServer(g) end) task.wait(0.06) end
+		for _=1,MAX_TRIES_PER_GEAR do pcall(function() r:FireServer(g) end) task.wait(0.06) end
 	end
 end
 local EVO_LIST = { "Evo Beetroot I","Evo Blueberry I","Evo Pumpkin I","Evo Mushroom I" }
@@ -213,35 +257,41 @@ screenGui.ResetOnSpawn = false
 screenGui.IgnoreGuiInset = false
 screenGui.Parent = playerGui
 
-local function makeButton(parent, text, size, pos, bg)
-	local b = Instance.new("TextButton")
-	b.Size = size; b.Position = pos
-	b.BackgroundColor3 = bg or Color3.fromRGB(70,100,180)
-	b.TextColor3 = Color3.fromRGB(255,255,255)
-	b.Text = text; b.Font = Enum.Font.GothamBold; b.TextSize = 13
-	b.Parent = parent; rounded(b,8)
-	return b
-end
-local function makeLabel(parent, text, size, pos, color, bold)
-	local l = Instance.new("TextLabel"); l.Size=size; l.Position=pos
-	l.BackgroundTransparency = 1; l.TextColor3 = color or Color3.fromRGB(220,230,255)
-	l.Font = bold and Enum.Font.GothamBold or Enum.Font.Gotham
-	l.TextSize = bold and 16 or 12; l.Text = text; l.TextXAlignment=Enum.TextXAlignment.Left
-	l.Parent = parent; return l
-end
-local function makeFrame(parent, size, pos, bg)
-	local f=Instance.new("Frame"); f.Size=size; f.Position=pos; f.BackgroundColor3=bg or Color3.fromRGB(36,36,36); f.BorderSizePixel=0; f.Parent=parent; rounded(f,10); return f
+local function makeDraggable(frame, handle)
+	frame.Active=true; frame.Selectable=true; handle.Active=true; handle.Selectable=true
+	local dragging=false; local dragStart; local startPos; local dragInputId
+	local function update(input)
+		local delta=input.Position - dragStart
+		frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+	end
+	local function begin(input)
+		dragging=true; dragStart=input.Position; startPos=frame.Position; dragInputId=input
+		input.Changed:Connect(function() if input.UserInputState==Enum.UserInputState.End then dragging=false; clampOnScreen(frame) end end)
+	end
+	handle.InputBegan:Connect(function(i)
+		if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then begin(i) end
+	end)
+	handle.InputChanged:Connect(function(i)
+		if i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch then if dragging then update(i) end end
+	end)
+	UserInputService.InputChanged:Connect(function(i)
+		if dragging and (i == dragInputId or i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then update(i) end
+	end)
 end
 
--- Player Tuner panel (compact)
-local main = makeFrame(screenGui, UDim2.fromOffset(300, 260), UDim2.fromScale(0.02, 0.04), Color3.fromRGB(36,36,36))
+-- Player Tuner panel (compact) + minimize FIX
+local mainFullSize = UDim2.fromOffset(300, 260)
+local main = makeFrame(screenGui, mainFullSize, UDim2.fromScale(0.02, 0.04), Color3.fromRGB(36,36,36))
 local title = makeFrame(main, UDim2.new(1,0,0,32), UDim2.fromOffset(0,0), Color3.fromRGB(28,28,28))
-makeLabel(title, "🎚️ PLAYER TUNER (LITE)", UDim2.new(1,-10,1,0), UDim2.new(0,10,0,0), Color3.fromRGB(255,255,255), true)
+makeLabel(title, "🎚️ PLAYER TUNER (LITE)", UDim2.new(1,-90,1,0), UDim2.new(0,10,0,0), Color3.fromRGB(255,255,255), true)
 local closeBtn = makeButton(title, "✕", UDim2.fromOffset(26,26), UDim2.new(1,-34,0,3), Color3.fromRGB(255,72,72))
 local minimizeBtn = makeButton(title, "—", UDim2.fromOffset(26,26), UDim2.new(1,-66,0,3), Color3.fromRGB(110,110,110))
-local content = makeFrame(main, UDim2.new(1,-20,1,-42), UDim2.new(0,10,0,38), Color3.fromRGB(36,36,36)); content.BackgroundTransparency=1
 
--- sliders simplifiés (touch friendly)
+local content = makeFrame(main, UDim2.new(1,-20,1,-42), UDim2.new(0,10,0,38), Color3.fromRGB(36,36,36)); content.BackgroundTransparency=1
+makeDraggable(main, title)
+attachMinimize(main, title, content, minimizeBtn, mainFullSize, 32) -- ✅ FIX minimize Player Tuner
+
+-- sliders simplifiés
 local function simpleSlider(y, labelText, minValue, maxValue, step, initialValue, onChange)
 	local frame = makeFrame(content, UDim2.new(1,0,0,52), UDim2.new(0,0,0,y), Color3.fromRGB(36,36,36)); frame.BackgroundTransparency=1
 	local label = makeLabel(frame, labelText, UDim2.new(1,-90,0,18), UDim2.new(0,0,0,0), Color3.fromRGB(255,255,255), true)
@@ -291,30 +341,6 @@ local antiRow   = makeFrame(content, UDim2.new(1,0,0,36), UDim2.new(0,0,0,212), 
 local antiAFKBtn= makeButton(antiRow, "🛡️ Anti-AFK: OFF", UDim2.new(0.6,-6,1,0), UDim2.new(0,0,0,0), Color3.fromRGB(100,130,100))
 local openAcorn = makeButton(antiRow, "🌰 ACORN COLLECTOR", UDim2.new(0.4,0,1,0), UDim2.new(0.6,6,0,0), Color3.fromRGB(200,160,60))
 
--- Draggable simple
-local function makeDraggable(frame, handle)
-	frame.Active=true; frame.Selectable=true; handle.Active=true; handle.Selectable=true
-	local dragging=false; local dragStart; local startPos; local dragInputId
-	local function update(input)
-		local delta=input.Position - dragStart
-		frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-	end
-	local function begin(input)
-		dragging=true; dragStart=input.Position; startPos=frame.Position; dragInputId=input
-		input.Changed:Connect(function() if input.UserInputState==Enum.UserInputState.End then dragging=false; clampOnScreen(frame) end end)
-	end
-	handle.InputBegan:Connect(function(i)
-		if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then begin(i) end
-	end)
-	handle.InputChanged:Connect(function(i)
-		if i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch then if dragging then update(i) end end
-	end)
-	UserInputService.InputChanged:Connect(function(i)
-		if dragging and (i == dragInputId or i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then update(i) end
-	end)
-end
-makeDraggable(main, title)
-
 resetBtn.MouseButton1Click:Connect(function()
 	resetDefaults()
 	speedSlider.set(DEFAULT_WALKSPEED); gravitySlider.set(DEFAULT_GRAVITY); jumpSlider.set(DEFAULT_JUMPPOWER)
@@ -334,29 +360,38 @@ noclipBtn.MouseButton1Click:Connect(function()
 		local ch=player.Character; if ch then for _,p in ipairs(ch:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide=true end end end
 	end
 end)
-closeBtn.MouseButton1Click:Connect(function() if isNoclipping then isNoclipping=false; if noclipConnection then noclipConnection:Disconnect(); end end; if screenGui then screenGui:Destroy() end end)
+closeBtn.MouseButton1Click:Connect(function()
+	if isNoclipping then isNoclipping=false; if noclipConnection then noclipConnection:Disconnect(); end end
+	if screenGui then screenGui:Destroy() end
+end)
 antiAFKBtn.MouseButton1Click:Connect(function()
 	antiAFKEnabled = not antiAFKEnabled
 	antiAFKBtn.Text = antiAFKEnabled and "🛡️ Anti-AFK: ON" or "🛡️ Anti-AFK: OFF"
 	antiAFKBtn.BackgroundColor3 = antiAFKEnabled and Color3.fromRGB(80,140,90) or Color3.fromRGB(100,130,100)
 end)
 
--- Gear Panel (compact)
+--==================================================
+--=================  GEAR PANEL  ===================
+--==================================================
 local gearGui = Instance.new("ScreenGui"); gearGui.Name="GearPanelLite"; gearGui.ResetOnSpawn=false; gearGui.IgnoreGuiInset=false; gearGui.Parent=playerGui
-local gearFrame = makeFrame(gearGui, UDim2.fromOffset(250, 250), UDim2.fromScale(0.25, 0.05), Color3.fromRGB(50,50,80))
+local gearFullSize = UDim2.fromOffset(250, 280)
+local gearFrame = makeFrame(gearGui, gearFullSize, UDim2.fromScale(0.25, 0.05), Color3.fromRGB(50,50,80))
 local gtitle = makeFrame(gearFrame, UDim2.new(1,0,0,28), UDim2.new(0,0,0,0), Color3.fromRGB(40,40,70))
-makeLabel(gtitle, "🛒 GEAR SHOP (L)", UDim2.new(1,-40,1,0), UDim2.new(0,10,0,0), Color3.fromRGB(255,255,255), true)
+makeLabel(gtitle, "🛒 GEAR SHOP (L)", UDim2.new(1,-70,1,0), UDim2.new(0,10,0,0), Color3.fromRGB(255,255,255), true)
 local gclose = makeButton(gtitle, "✕", UDim2.fromOffset(20,20), UDim2.new(1,-26,0,4), Color3.fromRGB(255,72,72))
+local gmin   = makeButton(gtitle, "—", UDim2.fromOffset(20,20), UDim2.new(1,-50,0,4), Color3.fromRGB(110,110,110)) -- ✅ minimize Gear
 local gbody  = makeFrame(gearFrame, UDim2.new(1,-12,1,-38), UDim2.new(0,6,0,34), Color3.fromRGB(50,50,80)); gbody.BackgroundTransparency=1
 makeDraggable(gearFrame, gtitle)
+attachMinimize(gearFrame, gtitle, gbody, gmin, gearFullSize, 28) -- ✅
 
-local tpGear  = makeButton(gbody, "📍 TP GEAR SHOP", UDim2.new(1,0,0,28), UDim2.new(0,0,0,0), Color3.fromRGB(60,180,60))
-local sellBtn = makeButton(gbody, "🧺 SELL INVENTORY", UDim2.new(1,0,0,28), UDim2.new(0,0,0,32), Color3.fromRGB(200,130,90))
-local chipBtn = makeButton(gbody, "🍁 SUBMIT ALL (Chipmunk)", UDim2.new(1,0,0,28), UDim2.new(0,0,0,64), Color3.fromRGB(90,140,210))
-local seedsBtn= makeButton(gbody, "🌱 BUY ALL SEEDS", UDim2.new(1,0,0,28), UDim2.new(0,0,0,96), Color3.fromRGB(100,170,100))
-local gearBtn2= makeButton(gbody, "🧰 BUY ALL GEAR",  UDim2.new(1,0,0,28), UDim2.new(0,0,0,128), Color3.fromRGB(120,140,200))
-local evoBtn  = makeButton(gbody, "🍁 BUY EVO (x1)",  UDim2.new(1,0,0,28), UDim2.new(0,0,0,160), Color3.fromRGB(200,140,90))
-local eggsBtn = makeButton(gbody, "🥚 BUY EGGS",      UDim2.new(1,0,0,28), UDim2.new(0,0,0,192), Color3.fromRGB(150,120,200))
+local tpGear  = makeButton(gbody, "📍 TP GEAR SHOP",      UDim2.new(1,0,0,28), UDim2.new(0,0,0,0),   Color3.fromRGB(60,180,60))
+local sellBtn = makeButton(gbody, "🧺 SELL INVENTORY",    UDim2.new(1,0,0,28), UDim2.new(0,0,0,32),  Color3.fromRGB(200,130,90))
+local chipBtn = makeButton(gbody, "🍁 SUBMIT ALL (Chip)", UDim2.new(1,0,0,28), UDim2.new(0,0,0,64),  Color3.fromRGB(90,140,210))
+local seedsBtn= makeButton(gbody, "🌱 BUY ALL SEEDS",     UDim2.new(1,0,0,28), UDim2.new(0,0,0,96),  Color3.fromRGB(100,170,100))
+local gearBtn2= makeButton(gbody, "🧰 BUY ALL GEAR",      UDim2.new(1,0,0,28), UDim2.new(0,0,0,128), Color3.fromRGB(120,140,200))
+local evoBtn  = makeButton(gbody, "🍁 BUY EVO (x1)",      UDim2.new(1,0,0,28), UDim2.new(0,0,0,160), Color3.fromRGB(200,140,90))
+local eggsBtn = makeButton(gbody, "🥚 BUY EGGS",          UDim2.new(1,0,0,28), UDim2.new(0,0,0,192), Color3.fromRGB(150,120,200))
+local coordsLabel = makeLabel(gbody, "Position: (…)",     UDim2.new(1,0,0,18), UDim2.new(0,0,0,224), Color3.fromRGB(200,200,255), false)
 
 gclose.MouseButton1Click:Connect(function() gearFrame.Visible=false end)
 gearBtn.MouseButton1Click:Connect(function() gearFrame.Visible=not gearFrame.Visible; if gearFrame.Visible then clampOnScreen(gearFrame) end end)
@@ -376,7 +411,6 @@ evoBtn.MouseButton1Click:Connect(buyEventEvosWorker)
 eggsBtn.MouseButton1Click:Connect(buyAllEggsWorker)
 
 -- Live coords (ralenti)
-local coordsLabel = makeLabel(gbody, "Position: (…)", UDim2.new(1,0,0,18), UDim2.new(0,0,0,224), Color3.fromRGB(200,200,255), false)
 task.spawn(function()
 	local acc=0
 	RunService.RenderStepped:Connect(function(dt)
@@ -426,14 +460,6 @@ local function ensureAcornGui()
 	ac.acornCollected = 0
 	ac.scanAutoEnabled = false
 	ac.scanPeriod = AUTO_SCAN_PERIOD
-
-	-- (sons coupés en LIGHT)
-	if not DISABLE_SOUNDS then
-		ac.alertSound = Instance.new("Sound")
-		ac.alertSound.SoundId = "rbxassetid://2767090"
-		ac.alertSound.Volume = 0.3
-		ac.alertSound.Parent = SoundService
-	end
 
 	-- Backpack auto-detect
 	ac.backpackCountValue, ac.backpackCapValue = nil, nil
@@ -533,11 +559,10 @@ local function ensureAcornGui()
 		ac.currentAcorn = best
 	end
 	local function onAcornAppeared(bp)
-		ac.isNuttyFever = true; ac.feverLastSeenAt = tick() -- on infère Fever rapidement (allégé)
+		ac.isNuttyFever = true; ac.feverLastSeenAt = tick()
 		ac.nextSpawnTime = tick() + (ac.isNuttyFever and ac.config.feverSpawnInterval or ac.config.normalSpawnInterval)
 		if ac.isNuttyFever and not isYAlignedWithPlayer(bp) then return end
 		if ac.isNuttyFever then local grounded = isGrounded(bp); if (not grounded) and (bp.Position.Y > ac.config.groundIgnoreHeight) then return end end
-		if (not LIGHT_MODE) and ac.config.soundAlert and ac.alertSound then ac.alertSound:Play() end
 		selectCurrentAcorn(bp)
 		if ac.autoTPOnDetect and ac.currentAcorn then
 			task.spawn(function()
@@ -568,7 +593,7 @@ local function ensureAcornGui()
 	Workspace.DescendantAdded:Connect(function(inst) local bp=isAcornBasePart(inst); if bp then onAcornAppeared(bp) end end)
 	Workspace.DescendantRemoving:Connect(onAcornDisappeared)
 
-	-- Scan (light) : première passe Y∈[1;4], stop au premier trouvé
+	-- Scan (light)
 	local function scanMapAcorn()
 		local best=nil
 		for _, obj in ipairs(Workspace:GetDescendants()) do
@@ -639,7 +664,7 @@ local function ensureAcornGui()
 		while true do
 			if ac.autoHarvestEnabled then
 				if ac.config.stopHarvestWhenBackpackFull then
-					local full,c,m = isBackpackFull()
+					local full,c,_ = isBackpackFull()
 					if full then
 						ac.autoHarvestEnabled=false
 					else
@@ -660,23 +685,27 @@ local function ensureAcornGui()
 		end
 	end)
 
-	-- UI (compact, pas d'effets)
+	-- UI (compact) + ✅ Minimize
 	acornGui = Instance.new("ScreenGui"); acornGui.Name="AcornLite"; acornGui.ResetOnSpawn=false; acornGui.IgnoreGuiInset=false; acornGui.Parent=playerGui
-	local Main = makeFrame(acornGui, UDim2.new(0, 320, 0, 420), UDim2.new(1,-330,0.5,-210), Color3.fromRGB(25,25,30))
+	local acFull = UDim2.new(0, 320, 0, 420)
+	local Main = makeFrame(acornGui, acFull, UDim2.new(1,-330,0.5,-210), Color3.fromRGB(25,25,30))
 	local Header = makeFrame(Main, UDim2.new(1,0,0,40), UDim2.new(0,0,0,0), Color3.fromRGB(30,30,38))
-	makeLabel(Header, "🌰 Acorn Collector (L)", UDim2.new(1,-50,1,0), UDim2.new(0,12,0,0), Color3.fromRGB(255,200,0), true)
+	makeLabel(Header, "🌰 Acorn Collector (L)", UDim2.new(1,-90,1,0), UDim2.new(0,12,0,0), Color3.fromRGB(255,200,0), true)
 	local Close = makeButton(Header, "✖", UDim2.fromOffset(28,28), UDim2.new(1,-34,0.5,-14), Color3.fromRGB(220,50,50))
+	local Min   = makeButton(Header, "—", UDim2.fromOffset(28,28), UDim2.new(1,-66,0.5,-14), Color3.fromRGB(110,110,110)) -- ✅ minimize Acorn
 	local Body  = makeFrame(Main, UDim2.new(1,-16,1,-52), UDim2.new(0,8,0,46), Color3.fromRGB(25,25,30)); Body.BackgroundTransparency=1
+	makeDraggable(Main, Header)
+	attachMinimize(Main, Header, Body, Min, acFull, 40) -- ✅
 
 	local TimerBox = makeFrame(Body, UDim2.new(1,0,0,90), UDim2.new(0,0,0,0), Color3.fromRGB(35,35,42))
 	makeLabel(TimerBox, "⏱️ Prochain spawn (Chubby):", UDim2.new(1,-20,0,24), UDim2.new(0,10,0,6), Color3.fromRGB(255,255,255), true)
 	local Countdown = makeLabel(TimerBox, "01:49", UDim2.new(0.5,-10,0,40), UDim2.new(0,8,0,40), Color3.fromRGB(255,200,0), false); Countdown.TextXAlignment=Enum.TextXAlignment.Center; Countdown.TextSize=28
-	acornCountLabel = makeLabel(TimerBox, "🥜 Collected: 0", UDim2.new(0.5,-10,0,40), UDim2.new(0.5,2,0,40), Color3.fromRGB(180,230,180), true); acornCountLabel.TextXAlignment=Enum.TextXAlignment.Center; acornCountLabel.TextSize=18
+	local acornCountLabel = makeLabel(TimerBox, "🥜 Collected: 0", UDim2.new(0.5,-10,0,40), UDim2.new(0.5,2,0,40), Color3.fromRGB(180,230,180), true); acornCountLabel.TextXAlignment=Enum.TextXAlignment.Center; acornCountLabel.TextSize=18
 
 	local StatusBox = makeFrame(Body, UDim2.new(1,0,0,50), UDim2.new(0,0,0,96), Color3.fromRGB(35,35,42))
 	local Status = makeLabel(StatusBox, "📍 Status: En veille…", UDim2.new(1,-20,1,-8), UDim2.new(0,10,0,4), Color3.fromRGB(200,200,200), false)
 
-	local AutoCollectBtn = makeButton(Body, "🤖 Auto Collect: OFF", UDim2.new(1,0,0,40), UDim2.new(0,0,0,154), Color3.fromRGB(200,60,60))
+	local AutoCollectBtn = makeButton(Body, "🤖 Auto Collect: ON", UDim2.new(1,0,0,40), UDim2.new(0,0,0,154), Color3.fromRGB(60,200,60))
 	local AutoTPBtn      = makeButton(Body, "⚡ Auto TP on Detect: ON", UDim2.new(1,0,0,40), UDim2.new(0,0,0,198), Color3.fromRGB(60,200,60))
 	local AutoHarvestBtn = makeButton(Body, "🌾 Auto Harvest (plantes): OFF", UDim2.new(1,0,0,40), UDim2.new(0,0,0,242), Color3.fromRGB(200,120,60))
 
@@ -684,18 +713,20 @@ local function ensureAcornGui()
 	local ScanNow   = makeButton(ScanRow, "🔎 Scan Now (Y 1–4)", UDim2.new(0.48,-4,1,0), UDim2.new(0,0,0,0), Color3.fromRGB(90,140,210))
 	local AutoScan  = makeButton(ScanRow, "📡 Auto-scan: OFF ("..tostring(ac.scanPeriod).."s)", UDim2.new(0.52,0,1,0), UDim2.new(0.48,4,0,0), Color3.fromRGB(80,100,140))
 
-	makeDraggable(Main, Header)
 	Close.MouseButton1Click:Connect(function() acornGui.Enabled=false end)
-
-	AutoCollectBtn.MouseButton1Click:Connect(function()
-		ac.autoTPOnDetect = not ac.autoTPOnDetect -- en LIGHT, on fusionne : Auto Collect = utiliser TP auto
+	AutoCollectBtn.MouseButton1Click:Connect(function() -- en LITE : alias de TP on detect
+		ac.autoTPOnDetect = not ac.autoTPOnDetect
 		AutoCollectBtn.BackgroundColor3 = ac.autoTPOnDetect and Color3.fromRGB(60,200,60) or Color3.fromRGB(200,60,60)
 		AutoCollectBtn.Text = ac.autoTPOnDetect and "🤖 Auto Collect: ON" or "🤖 Auto Collect: OFF"
+		AutoTPBtn.BackgroundColor3 = AutoCollectBtn.BackgroundColor3
+		AutoTPBtn.Text = ac.autoTPOnDetect and "⚡ Auto TP on Detect: ON" or "⚡ Auto TP on Detect: OFF"
 	end)
 	AutoTPBtn.MouseButton1Click:Connect(function()
 		ac.autoTPOnDetect = not ac.autoTPOnDetect
 		AutoTPBtn.BackgroundColor3 = ac.autoTPOnDetect and Color3.fromRGB(60,200,60) or Color3.fromRGB(200,60,60)
 		AutoTPBtn.Text = ac.autoTPOnDetect and "⚡ Auto TP on Detect: ON" or "⚡ Auto TP on Detect: OFF"
+		AutoCollectBtn.BackgroundColor3 = AutoTPBtn.BackgroundColor3
+		AutoCollectBtn.Text = AutoTPBtn.Text:gsub("⚡","🤖"):gsub("on Detect: ","")
 	end)
 	AutoHarvestBtn.MouseButton1Click:Connect(function()
 		ac.autoHarvestEnabled = not ac.autoHarvestEnabled
@@ -731,6 +762,7 @@ local function ensureAcornGui()
 	task.spawn(function()
 		while acornGui and acornGui.Parent do
 			if ac.scanAutoEnabled then
+				script.Disabled = false
 				scanMapAcorn()
 				for i=1, ac.scanPeriod do if not ac.scanAutoEnabled then break end task.wait(1) end
 			else
@@ -754,6 +786,27 @@ end
 openAcorn.MouseButton1Click:Connect(toggleAcornUI)
 
 --==================================================
+--==========  AUTO-BUY BACKGROUND (ON)  ============
+--==================================================
+local seedsTimer, gearTimer, eventTimer, eggsTimer =
+	AUTO_PERIOD_SEEDS, AUTO_PERIOD_GEAR, AUTO_PERIOD_EVENT, AUTO_PERIOD_EGGS
+
+task.spawn(function()
+	while true do
+		task.wait(1)
+		if AUTO_BUY_SEEDS then seedsTimer = seedsTimer - 1 else seedsTimer = AUTO_PERIOD_SEEDS end
+		if AUTO_BUY_GEAR  then gearTimer  = gearTimer  - 1 else gearTimer  = AUTO_PERIOD_GEAR  end
+		if AUTO_BUY_EVENT then eventTimer = eventTimer - 1 else eventTimer = AUTO_PERIOD_EVENT end
+		if AUTO_BUY_EGGS  then eggsTimer  = eggsTimer  - 1 else eggsTimer  = AUTO_PERIOD_EGGS  end
+
+		if AUTO_BUY_SEEDS and seedsTimer<=0 then task.spawn(buyAllSeedsWorker); seedsTimer=AUTO_PERIOD_SEEDS end
+		if AUTO_BUY_GEAR  and gearTimer<=0  then task.spawn(buyAllGearWorker);  gearTimer =AUTO_PERIOD_GEAR  end
+		if AUTO_BUY_EVENT and eventTimer<=0 then task.spawn(buyEventEvosWorker); eventTimer=AUTO_PERIOD_EVENT end
+		if AUTO_BUY_EGGS  and eggsTimer<=0  then task.spawn(buyAllEggsWorker);  eggsTimer =AUTO_PERIOD_EGGS  end
+	end
+end)
+
+--==================================================
 --===========  RESPAWN / GC / INIT  ================
 --==================================================
 applySpeed(currentSpeed); applyGravity(currentGravity); applyJump(currentJump)
@@ -765,7 +818,7 @@ player.CharacterAdded:Connect(function(char)
 	if isNoclipping then task.wait(0.2); if noclipConnection then noclipConnection:Disconnect(); noclipConnection=nil end; isNoclipping=false; end
 end)
 
--- GC périodique (si dispo)
+-- GC périodique
 task.spawn(function()
 	while true do
 		task.wait(GC_SWEEP_EVERY)
@@ -773,4 +826,8 @@ task.spawn(function()
 	end
 end)
 
-msg("✅ Saad LITE chargé (notifs OFF, ESP OFF, scans/refresh allégés).")
+-- Petits bindings Gear
+gearBtn.MouseButton1Click:Connect(function()
+	gearFrame.Visible = not gearFrame.Visible
+	if gearFrame.Visible then clampOnScreen(gearFrame) end
+end)
