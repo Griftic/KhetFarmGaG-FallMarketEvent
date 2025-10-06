@@ -7,6 +7,8 @@
 -- - Scanner d'acorn: bouton + auto-scan 29s (Y ∈ [1;4])
 -- - AUTO-HARVEST = version v2.4 (celle qui marche chez toi), réintégrée telle quelle
 -- - 🔕 MOD: Auto-harvest ignore Mushroom
+-- - 🧊 MOD: TP acorn avec caméra figée (discret)
+-- - 🎒 MOD: Stop auto-harvest si backpack plein (+ notif)
 
 --// Services
 local Players             = game:GetService("Players")
@@ -954,6 +956,101 @@ local function ensureAcornGui()
 
 	local ac = {} -- namespace local
 
+	-- === Backpack full detector (auto) ===
+	ac.backpackCountValue = nil
+	ac.backpackCapValue   = nil
+
+	local function isValueObject(x)
+		return x and (x:IsA("IntValue") or x:IsA("NumberValue"))
+	end
+
+	local COUNT_NAMES = {
+		"count","current","amount","qty","quantity","items","inventory","backpack","bag","held","stored"
+	}
+	local CAP_NAMES = {
+		"capacity","cap","max","maxcapacity","maxamount","limit","maxitems","maxinventory","maxbackpack"
+	}
+
+	local function nameMatchAny(objName, list)
+		local nm = string.lower(tostring(objName or ""))
+		for _, k in ipairs(list) do
+			if nm == k or nm:find(k) then return true end
+		end
+		return false
+	end
+
+	local function tryAutoBindBackpack()
+		if ac.backpackCountValue and ac.backpackCapValue then return true end
+		local searchRoots = {
+			player,
+			player:FindFirstChild("PlayerGui"),
+			player:FindFirstChild("PlayerScripts"),
+			ReplicatedStorage,
+			Workspace
+		}
+		local candidatesByParent = {}
+		for _, root in ipairs(searchRoots) do
+			if root then
+				for _, v in ipairs(root:GetDescendants()) do
+					if isValueObject(v) then
+						local parentKey = v.Parent or root
+						candidatesByParent[parentKey] = candidatesByParent[parentKey] or { }
+						if nameMatchAny(v.Name, COUNT_NAMES) then
+							candidatesByParent[parentKey].count = candidatesByParent[parentKey].count or v
+						elseif nameMatchAny(v.Name, CAP_NAMES) then
+							candidatesByParent[parentKey].cap = candidatesByParent[parentKey].cap or v
+						end
+					end
+				end
+			end
+		end
+		local bestParent, bestScore = nil, -1
+		for parent, pair in pairs(candidatesByParent) do
+			local count, cap = pair.count, pair.cap
+			if isValueObject(count) and isValueObject(cap) then
+				local c, m = tonumber(count.Value) or -1, tonumber(cap.Value) or -1
+				if c >= 0 and m > 0 and m <= 100000 and c <= m then
+					local score = (m <= 10000 and 10 or 0) + (m - c)
+					if score > bestScore then bestScore, bestParent = score, parent end
+				end
+			end
+		end
+		if bestParent then
+			ac.backpackCountValue = candidatesByParent[bestParent].count
+			ac.backpackCapValue   = candidatesByParent[bestParent].cap
+			return true
+		end
+		return false
+	end
+
+	local function getBackpackState()
+		if not (ac.backpackCountValue and ac.backpackCapValue) then
+			tryAutoBindBackpack()
+		end
+		local count = ac.backpackCountValue and tonumber(ac.backpackCountValue.Value) or nil
+		local cap   = ac.backpackCapValue   and tonumber(ac.backpackCapValue.Value)   or nil
+		return count, cap
+	end
+
+	local function isBackpackFull()
+		local count, cap = getBackpackState()
+		if count and cap then
+			return count >= cap, count, cap
+		end
+		return false, nil, nil
+	end
+
+	local function notify(text)
+		pcall(function()
+			StarterGui:SetCore("SendNotification", {
+				Title = "🎒 Backpack",
+				Text = text,
+				Duration = 3
+			})
+		end)
+		msg("🎒 "..text)
+	end
+
 	-- Config Chubby (109s) + Fever (30s)
 	ac.config = {
 		acornName = "Acorn",
@@ -968,6 +1065,12 @@ local function ensureAcornGui()
 		instantTp = false,
 		tpSpeed   = 120,
 		returnToStartAfterCollect = true,
+
+		-- 🧊 TP discret : fige la camera pendant le TP
+		freezeCameraOnTP = true,
+
+		-- 🎒 Stop auto-harvest si backpack plein
+		stopHarvestWhenBackpackFull = true,
 
 		autoHarvestRadius   = 25,
 		autoHarvestTick     = 0.12,
@@ -1143,7 +1246,7 @@ local function ensureAcornGui()
 		end
 	end
 
-	-- Collect (TP dur -> collect -> retour)
+	-- Collect (TP dur -> collect -> retour) avec caméra figée si activé
 	local function collectAcorn(acornPart)
 		if not acornPart or not acornPart.Parent then return end
 		local hrp = getHRP()
@@ -1151,23 +1254,35 @@ local function ensureAcornGui()
 		ac.pendingCollect[acornPart] = true
 
 		local originalPos = hrp.Position
-		hardSetPosition(acornPart.Position + Vector3.new(0,3,0))
-		task.wait(0.10)
 
-		pcall(function()
-			local hrp2 = getHRP()
-			if hrp2 then
-				firetouchinterest(hrp2, acornPart, 0)
-				task.wait(0.05)
-				firetouchinterest(hrp2, acornPart, 1)
+		local function doCollect()
+			local targetPos = acornPart.Position + Vector3.new(0,3,0)
+			hrp.AssemblyLinearVelocity = Vector3.new()
+			hrp.AssemblyAngularVelocity = Vector3.new()
+			hrp.CFrame = CFrame.new(targetPos)
+			task.wait(0.10)
+
+			pcall(function()
+				local hrp2 = getHRP()
+				if hrp2 then
+					firetouchinterest(hrp2, acornPart, 0)
+					task.wait(0.05)
+					firetouchinterest(hrp2, acornPart, 1)
+				end
+			end)
+			local prompt = acornPart:FindFirstChildOfClass("ProximityPrompt"); if prompt then pcall(fireproximityprompt, prompt) end
+			local click  = acornPart:FindFirstChildOfClass("ClickDetector");   if click  then pcall(fireclickdetector,  click)  end
+
+			task.wait(0.15)
+			if ac.config.returnToStartAfterCollect and originalPos then
+				hrp.CFrame = CFrame.new(originalPos)
 			end
-		end)
-		local prompt = acornPart:FindFirstChildOfClass("ProximityPrompt"); if prompt then pcall(fireproximityprompt, prompt) end
-		local click  = acornPart:FindFirstChildOfClass("ClickDetector");   if click  then pcall(fireclickdetector,  click)  end
+		end
 
-		task.wait(0.15)
-		if ac.config.returnToStartAfterCollect and originalPos then
-			hardSetPosition(originalPos)
+		if ac.config.freezeCameraOnTP then
+			withFrozenCamera(doCollect)
+		else
+			doCollect()
 		end
 	end
 	ac._collectAcorn = collectAcorn
@@ -1230,7 +1345,6 @@ local function ensureAcornGui()
 
 	local function onAcornAppeared(bp)
 		if not bp or not bp.Parent then return end
-		-- heuristique fever
 		local t = tick()
 		table.insert(ac.lastSpawnTimestamps, t)
 		local keep = {}
@@ -1249,7 +1363,6 @@ local function ensureAcornGui()
 		ac.feverLastSeenAt = tick()
 		ac.nextSpawnTime = tick() + (ac.isNuttyFever and ac.config.feverSpawnInterval or ac.config.normalSpawnInterval)
 
-		-- Filtres
 		if ac.isNuttyFever and not isYAlignedWithPlayer(bp) then return end
 		if ac.isNuttyFever then
 			local grounded = select(1, isGrounded(bp))
@@ -1337,32 +1450,23 @@ local function ensureAcornGui()
 
 	-- =================== AUTO HARVEST (version v2.4) ===================
 	ac.autoHarvestEnabled = false
+	ac._autoHarvestBtn = nil -- ref mise plus bas
 
 	local function lowerOrEmpty(s) if typeof(s)=="string" then return string.lower(s) end return "" end
-
-	local function containsAny(s, list)
-		for _, kw in ipairs(list) do
-			if s:find(kw) then return true end
-		end
-		return false
-	end
+	local function containsAny(s, list) for _, kw in ipairs(list) do if s:find(kw) then return true end end return false end
 
 	local function isPlantPrompt(prompt)
 		if not prompt or not prompt.Parent then return false end
-
-		-- Textes du prompt
 		local action = lowerOrEmpty(prompt.ActionText)
 		local object = lowerOrEmpty(prompt.ObjectText)
 
-		-- ❌ Exclusion prioritaire: ignore Mushroom par texte
+		-- Exclusion Mushroom prioritaire
 		if containsAny(action, ac.config.plantExclude) or containsAny(object, ac.config.plantExclude) then
 			return false
 		end
 
-		-- ✅ Texte de récolte explicite
 		for _, kw in ipairs(ac.config.promptTextWhitelist) do
 			if action:find(kw) or object:find(kw) then
-				-- Double-check exclusion via ancêtres
 				local node = prompt.Parent
 				local steps = 0
 				while node and steps < 4 do
@@ -1374,13 +1478,12 @@ local function ensureAcornGui()
 			end
 		end
 
-		-- Heuristique via noms/ancêtres
 		local node = prompt
 		local steps = 0
 		while node and steps < 4 do
 			local nameLower = lowerOrEmpty(node.Name)
 			for _, bad in ipairs(ac.config.promptBlacklist) do if nameLower:find(bad) then return false end end
-			if containsAny(nameLower, ac.config.plantExclude) then return false end -- ❌ exclu Mushroom
+			if containsAny(nameLower, ac.config.plantExclude) then return false end
 			for _, good in ipairs(ac.config.plantWhitelist) do if nameLower:find(good) then return true end end
 			node = node.Parent; steps += 1
 		end
@@ -1437,6 +1540,22 @@ local function ensureAcornGui()
 	task.spawn(function()
 		while true do
 			if ac.autoHarvestEnabled then
+				-- 🎒 Stop auto-harvest si backpack plein
+				if ac.config.stopHarvestWhenBackpackFull then
+					local full, c, m = isBackpackFull()
+					if full then
+						ac.autoHarvestEnabled = false
+						notify(("Backpack plein (%d/%d) : arrêt de l'auto-harvest."):format(c or -1, m or -1))
+						if ac._autoHarvestBtn and ac._autoHarvestBtn.Parent then
+							pcall(function()
+								ac._autoHarvestBtn.BackgroundColor3 = Color3.fromRGB(200, 120, 60)
+								ac._autoHarvestBtn.Text = "🌾 Auto Harvest (plantes): OFF"
+							end)
+						end
+						goto continue_loop
+					end
+				end
+
 				if ac.config.autoHarvestUsePrompts then
 					local prompts = getNearbyPlantPrompts(ac.config.autoHarvestRadius)
 					for _, prompt in ipairs(prompts) do
@@ -1454,6 +1573,7 @@ local function ensureAcornGui()
 				end
 				task.wait(ac.config.autoHarvestTick)
 			else
+				::continue_loop::
 				task.wait(0.2)
 			end
 		end
@@ -1610,6 +1730,7 @@ local function ensureAcornGui()
 	AutoHarvestBtn.TextSize = 18
 	AutoHarvestBtn.Parent = Container
 	rounded(AutoHarvestBtn,10)
+	ac._autoHarvestBtn = AutoHarvestBtn
 
 	local FeverBadge = Instance.new("TextLabel")
 	FeverBadge.Size = UDim2.new(1, 0, 0, 35)
@@ -1841,4 +1962,4 @@ end
 openAcornBtn.MouseButton1Click:Connect(toggleAcornUI)
 
 -- === Scales + ready msg ===
-msg("✅ Saad helper pack chargé + 🌰 Acorn Collector v2.6 (auto-harvest v2.4 • ignore Mushroom • ⌘/Ctrl+clic • auto-scan 29s • Y 1–4).", Color3.fromRGB(170,230,255))
+msg("✅ Saad helper pack chargé + 🌰 Acorn Collector v2.6 (caméra figée au TP • stop harvest si backpack plein • ignore Mushroom • ⌘/Ctrl+clic • auto-scan 29s • Y 1–4).", Color3.fromRGB(170,230,255))
