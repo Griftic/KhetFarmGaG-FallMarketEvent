@@ -6,6 +6,7 @@
 -- - ⌘/Ctrl + clic pour TP/collect (Mac OK)
 -- - Scanner d'acorn: bouton + auto-scan 29s (Y ∈ [1;4])
 -- - AUTO-HARVEST = version v2.4 (celle qui marche chez toi), réintégrée telle quelle
+-- - 🔕 MOD: Auto-harvest ignore Mushroom
 
 --// Services
 local Players             = game:GetService("Players")
@@ -974,7 +975,11 @@ local function ensureAcornGui()
 		autoHarvestUsePrompts = true,
 		promptHoldDuration  = 0.25,  -- ← valeur v2.4
 
-		plantWhitelist = { "plant","harvest","crop","fruit","vegetable","tree","bush","flower","mushroom","pick","collect" },
+		-- ✅ Whitelist sans "mushroom"
+		plantWhitelist = { "plant","harvest","crop","fruit","vegetable","tree","bush","flower","pick","collect" },
+		-- ✅ Exclusions explicites
+		plantExclude = { "mushroom" },
+
 		promptTextWhitelist = { "harvest","pick","collect","récolter","cueillir" },
 		promptBlacklist = { "fence","save","slot","skin","shop","buy","sell","chest","settings","rename","open","claim","craft","upgrade" },
 
@@ -1055,7 +1060,6 @@ local function ensureAcornGui()
 		local direction = Vector3.new(0, -200, 0)
 		local params = RaycastParams.new()
 		params.FilterDescendantsInstances = {acorn}
-		-- (Raycast pour info; pas critique pour auto-harvest)
 		if Enum.RaycastFilterType and Enum.RaycastFilterType.Exclude then
 			params.FilterType = Enum.RaycastFilterType.Exclude
 		end
@@ -1290,7 +1294,6 @@ local function ensureAcornGui()
 	Workspace.DescendantAdded:Connect(function(inst)
 		local bp = isAcornBasePart(inst)
 		if bp then
-			-- Si dans la fenêtre d'intérêt Y, on traite en priorité
 			if bp.Position.Y >= 1 and bp.Position.Y <= 4 then
 				onAcornAppeared(bp)
 			else
@@ -1321,7 +1324,7 @@ local function ensureAcornGui()
 	end
 
 	local function initialScan()
-		local ok, found = scanMapAcorn()
+		local ok = select(1, scanMapAcorn())
 		if not ok then
 			local best = nil
 			for _, obj in ipairs(Workspace:GetDescendants()) do
@@ -1336,19 +1339,49 @@ local function ensureAcornGui()
 	ac.autoHarvestEnabled = false
 
 	local function lowerOrEmpty(s) if typeof(s)=="string" then return string.lower(s) end return "" end
+
+	local function containsAny(s, list)
+		for _, kw in ipairs(list) do
+			if s:find(kw) then return true end
+		end
+		return false
+	end
+
 	local function isPlantPrompt(prompt)
 		if not prompt or not prompt.Parent then return false end
+
+		-- Textes du prompt
 		local action = lowerOrEmpty(prompt.ActionText)
 		local object = lowerOrEmpty(prompt.ObjectText)
-		for _, kw in ipairs(ac.config.promptTextWhitelist) do
-			if action:find(kw) or object:find(kw) then return true end
+
+		-- ❌ Exclusion prioritaire: ignore Mushroom par texte
+		if containsAny(action, ac.config.plantExclude) or containsAny(object, ac.config.plantExclude) then
+			return false
 		end
+
+		-- ✅ Texte de récolte explicite
+		for _, kw in ipairs(ac.config.promptTextWhitelist) do
+			if action:find(kw) or object:find(kw) then
+				-- Double-check exclusion via ancêtres
+				local node = prompt.Parent
+				local steps = 0
+				while node and steps < 4 do
+					local nm = lowerOrEmpty(node.Name)
+					if containsAny(nm, ac.config.plantExclude) then return false end
+					steps += 1; node = node.Parent
+				end
+				return true
+			end
+		end
+
+		-- Heuristique via noms/ancêtres
 		local node = prompt
 		local steps = 0
 		while node and steps < 4 do
-			local name = lowerOrEmpty(node.Name)
-			for _, bad in ipairs(ac.config.promptBlacklist) do if name:find(bad) then return false end end
-			for _, good in ipairs(ac.config.plantWhitelist) do if name:find(good) then return true end end
+			local nameLower = lowerOrEmpty(node.Name)
+			for _, bad in ipairs(ac.config.promptBlacklist) do if nameLower:find(bad) then return false end end
+			if containsAny(nameLower, ac.config.plantExclude) then return false end -- ❌ exclu Mushroom
+			for _, good in ipairs(ac.config.plantWhitelist) do if nameLower:find(good) then return true end end
 			node = node.Parent; steps += 1
 		end
 		return false
@@ -1357,7 +1390,6 @@ local function ensureAcornGui()
 	local function makeOverlapParamsExcludeCharacter()
 		local params = OverlapParams.new()
 		params.FilterDescendantsInstances = {player.Character}
-		-- Compat API: Blacklist (ancien) sinon Exclude (nouveau)
 		if Enum.RaycastFilterType and Enum.RaycastFilterType.Blacklist then
 			params.FilterType = Enum.RaycastFilterType.Blacklist
 		else
@@ -1408,7 +1440,6 @@ local function ensureAcornGui()
 				if ac.config.autoHarvestUsePrompts then
 					local prompts = getNearbyPlantPrompts(ac.config.autoHarvestRadius)
 					for _, prompt in ipairs(prompts) do
-						-- tir v2.4: appui + mini-hold si requis, puis relance
 						pcall(fireproximityprompt, prompt)
 						if prompt.HoldDuration and prompt.HoldDuration > 0 then
 							task.wait(math.min(prompt.HoldDuration, ac.config.promptHoldDuration))
@@ -1510,6 +1541,7 @@ local function ensureAcornGui()
 	CountdownLabel.TextXAlignment = Enum.TextXAlignment.Center
 	CountdownLabel.Parent = TimerFrame
 
+	-- ne pas redéclarer 'local' ici, on réutilise la var externe
 	acornCountLabel = Instance.new("TextLabel")
 	acornCountLabel.Size = UDim2.new(0.5, -10, 0, 40)
 	acornCountLabel.Position = UDim2.new(0.5, 0, 0, 40)
@@ -1711,8 +1743,8 @@ local function ensureAcornGui()
 		local function metaOrCtrlDown()
 			return UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
 				or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
-				or UserInputService:IsKeyDown(Enum.KeyCode.LeftMeta)   -- ⌘ (Mac)
-				or UserInputService:IsKeyDown(Enum.KeyCode.RightMeta)  -- ⌘ (Mac)
+				or UserInputService:IsKeyDown(Enum.KeyCode.LeftMeta)
+				or UserInputService:IsKeyDown(Enum.KeyCode.RightMeta)
 		end
 		mouse.Button1Down:Connect(function()
 			if metaOrCtrlDown() then
@@ -1809,4 +1841,4 @@ end
 openAcornBtn.MouseButton1Click:Connect(toggleAcornUI)
 
 -- === Scales + ready msg ===
-msg("✅ Saad helper pack chargé + 🌰 Acorn Collector v2.6 (auto-harvest v2.4 • ⌘/Ctrl+clic • auto-scan 29s • Y 1–4).", Color3.fromRGB(170,230,255))
+msg("✅ Saad helper pack chargé + 🌰 Acorn Collector v2.6 (auto-harvest v2.4 • ignore Mushroom • ⌘/Ctrl+clic • auto-scan 29s • Y 1–4).", Color3.fromRGB(170,230,255))
