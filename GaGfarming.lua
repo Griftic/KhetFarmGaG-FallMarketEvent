@@ -5,7 +5,7 @@
 -- - Compteur d'acorns + Timer calé Chubby (109s / 30s Fever)
 -- - ⌘/Ctrl + clic pour TP/collect (Mac OK)
 -- - Scanner d'acorn: bouton + auto-scan 29s (Y ∈ [1;4])
--- - AUTO-HARVEST = version v2.4 (celle qui marche chez toi), réintégrée telle quelle
+-- - AUTO-HARVEST = version v2.4 (celle qui marche chez toi)
 -- - 🔕 MOD: Auto-harvest ignore Mushroom
 -- - 🧊 MOD: TP acorn avec caméra figée (discret)
 -- - 🎒 MOD: Stop auto-harvest si backpack plein (+ notif)
@@ -1552,28 +1552,44 @@ local function ensureAcornGui()
 								ac._autoHarvestBtn.Text = "🌾 Auto Harvest (plantes): OFF"
 							end)
 						end
-						goto continue_loop
-					end
-				end
-
-				if ac.config.autoHarvestUsePrompts then
-					local prompts = getNearbyPlantPrompts(ac.config.autoHarvestRadius)
-					for _, prompt in ipairs(prompts) do
-						pcall(fireproximityprompt, prompt)
-						if prompt.HoldDuration and prompt.HoldDuration > 0 then
-							task.wait(math.min(prompt.HoldDuration, ac.config.promptHoldDuration))
-							pcall(fireproximityprompt, prompt)
+					else
+						-- Harvest normal
+						if ac.config.autoHarvestUsePrompts then
+							local prompts = getNearbyPlantPrompts(ac.config.autoHarvestRadius)
+							for _, prompt in ipairs(prompts) do
+								pcall(fireproximityprompt, prompt)
+								if prompt.HoldDuration and prompt.HoldDuration > 0 then
+									task.wait(math.min(prompt.HoldDuration, ac.config.promptHoldDuration))
+									pcall(fireproximityprompt, prompt)
+								end
+							end
+						end
+						if ac.config.autoHarvestSpamE then
+							VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+							task.wait(0.03)
+							VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
 						end
 					end
-				end
-				if ac.config.autoHarvestSpamE then
-					VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-					task.wait(0.03)
-					VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+				else
+					-- Harvest normal (sans check backpack)
+					if ac.config.autoHarvestUsePrompts then
+						local prompts = getNearbyPlantPrompts(ac.config.autoHarvestRadius)
+						for _, prompt in ipairs(prompts) do
+							pcall(fireproximityprompt, prompt)
+							if prompt.HoldDuration and prompt.HoldDuration > 0 then
+								task.wait(math.min(prompt.HoldDuration, ac.config.promptHoldDuration))
+								pcall(fireproximityprompt, prompt)
+							end
+						end
+					end
+					if ac.config.autoHarvestSpamE then
+						VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+						task.wait(0.03)
+						VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+					end
 				end
 				task.wait(ac.config.autoHarvestTick)
 			else
-				::continue_loop::
 				task.wait(0.2)
 			end
 		end
@@ -1661,8 +1677,7 @@ local function ensureAcornGui()
 	CountdownLabel.TextXAlignment = Enum.TextXAlignment.Center
 	CountdownLabel.Parent = TimerFrame
 
-	-- ne pas redéclarer 'local' ici, on réutilise la var externe
-	acornCountLabel = Instance.new("TextLabel")
+	local acornCountLabel = Instance.new("TextLabel")
 	acornCountLabel.Size = UDim2.new(0.5, -10, 0, 40)
 	acornCountLabel.Position = UDim2.new(0.5, 0, 0, 40)
 	acornCountLabel.BackgroundTransparency = 1
@@ -1904,7 +1919,7 @@ local function ensureAcornGui()
 		end
 	end)
 
-	-- Fever flags externes (si existants)
+	-- Fever flags externes
 	local function tryBindExternalFeverFlags()
 		local function consider(inst)
 			if inst:IsA("BoolValue") then
@@ -1938,7 +1953,6 @@ local function ensureAcornGui()
 
 	initialScan()
 	tryBindExternalFeverFlags()
-	setCount(ac.acornCollected)
 
 	StarterGui:SetCore("SendNotification", {
 		Title = "🌰 Acorn Collector",
@@ -1951,8 +1965,13 @@ local function ensureAcornGui()
 end
 
 -- Toggle UI Acorn depuis le Player Tuner
+local function ensureAcornGuiWrapper()
+	local ok, gui = pcall(ensureAcornGui)
+	if ok then return gui else warn(gui) return nil end
+end
 local function toggleAcornUI()
-	local gui = ensureAcornGui()
+	local gui = ensureAcornGuiWrapper()
+	if not gui then return end
 	gui.Enabled = not gui.Enabled
 	if gui.Enabled then
 		local frame = gui:FindFirstChildWhichIsA("Frame")
