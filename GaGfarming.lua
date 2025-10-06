@@ -7,7 +7,7 @@
 -- - Scanner d'acorn: bouton + auto-scan 29s (Y ∈ [1;4])
 -- - AUTO-HARVEST = version v2.4 (celle qui marche chez toi)
 -- - 🔕 MOD: Auto-harvest ignore Mushroom
--- - 🧊 MOD: TP acorn avec caméra figée (discret)
+-- - 🧊 MOD: TP acorn avec caméra figée (discret) — FIX restauration robuste
 -- - 🎒 MOD: Stop auto-harvest si backpack plein (+ notif)
 
 --// Services
@@ -97,13 +97,43 @@ local function applyGravity(v) currentGravity=v; workspace.Gravity=v end
 local function applyJump(v)    currentJump=v;   local h=player.Character and player.Character:FindFirstChildOfClass("Humanoid"); if h then h.JumpPower=v end end
 local function resetDefaults() applySpeed(DEFAULT_WALKSPEED); applyGravity(DEFAULT_GRAVITY); applyJump(DEFAULT_JUMPPOWER); msg("↩️ Reset (16 / 196.2 / 50).", Color3.fromRGB(180,220,255)) end
 local function teleportTo(p) local hrp=getHRP(); if not hrp then msg("❌ HRP introuvable.", Color3.fromRGB(255,100,100)) return end; hrp.CFrame=CFrame.new(p) end
+
+-- 🔒 Caméra : gel sûr (toujours restaurée, même en cas d’erreur/yield)
+local camFreezeBusy = false
 local function withFrozenCamera(fn)
-	local cam=workspace.CurrentCamera; local t,s,cf=cam.CameraType,cam.CameraSubject,cam.CFrame
-	cam.CameraType=Enum.CameraType.Scriptable; cam.CFrame=cf
-	local ok,err=pcall(fn)
-	cam.CameraType,cam.CameraSubject,cam.CFrame=t,s,cf
+	local cam = workspace.CurrentCamera
+	if not cam then
+		-- Si pas de caméra (mobile/chargement), exécute simplement
+		local ok, err = pcall(fn)
+		if not ok then warn(err) end
+		return
+	end
+	-- Empêche les gels imbriqués de se marcher dessus
+	if camFreezeBusy then
+		local ok2, err2 = pcall(fn)
+		if not ok2 then warn(err2) end
+		return
+	end
+	camFreezeBusy = true
+	-- Sauvegarde
+	local origType    = cam.CameraType
+	local origSubject = cam.CameraSubject
+	local origCF      = cam.CFrame
+	-- Figer
+	pcall(function()
+		cam.CameraType = Enum.CameraType.Scriptable
+		cam.CFrame     = origCF
+	end)
+	-- Exécuter l’action
+	local ok, err = pcall(fn)
 	if not ok then warn(err) end
+	-- Restauration ultra-sûre (ordre: Subject → CFrame → Type)
+	pcall(function() cam.CameraSubject = origSubject end)
+	pcall(function() cam.CFrame       = origCF      end)
+	pcall(function() cam.CameraType    = origType    end)
+	camFreezeBusy = false
 end
+
 local function fmtTime(sec) sec=math.max(0,math.floor(sec+0.5)) local m=math.floor(sec/60) local s=sec%60 return string.format("%d:%02d",m,s) end
 
 -- Clamp UI à l’écran
@@ -964,30 +994,18 @@ local function ensureAcornGui()
 		return x and (x:IsA("IntValue") or x:IsA("NumberValue"))
 	end
 
-	local COUNT_NAMES = {
-		"count","current","amount","qty","quantity","items","inventory","backpack","bag","held","stored"
-	}
-	local CAP_NAMES = {
-		"capacity","cap","max","maxcapacity","maxamount","limit","maxitems","maxinventory","maxbackpack"
-	}
+	local COUNT_NAMES = { "count","current","amount","qty","quantity","items","inventory","backpack","bag","held","stored" }
+	local CAP_NAMES   = { "capacity","cap","max","maxcapacity","maxamount","limit","maxitems","maxinventory","maxbackpack" }
 
 	local function nameMatchAny(objName, list)
 		local nm = string.lower(tostring(objName or ""))
-		for _, k in ipairs(list) do
-			if nm == k or nm:find(k) then return true end
-		end
+		for _, k in ipairs(list) do if nm == k or nm:find(k) then return true end end
 		return false
 	end
 
 	local function tryAutoBindBackpack()
 		if ac.backpackCountValue and ac.backpackCapValue then return true end
-		local searchRoots = {
-			player,
-			player:FindFirstChild("PlayerGui"),
-			player:FindFirstChild("PlayerScripts"),
-			ReplicatedStorage,
-			Workspace
-		}
+		local searchRoots = { player, player:FindFirstChild("PlayerGui"), player:FindFirstChild("PlayerScripts"), ReplicatedStorage, Workspace }
 		local candidatesByParent = {}
 		for _, root in ipairs(searchRoots) do
 			if root then
@@ -1042,11 +1060,7 @@ local function ensureAcornGui()
 
 	local function notify(text)
 		pcall(function()
-			StarterGui:SetCore("SendNotification", {
-				Title = "🎒 Backpack",
-				Text = text,
-				Duration = 3
-			})
+			StarterGui:SetCore("SendNotification", { Title = "🎒 Backpack", Text = text, Duration = 3 })
 		end)
 		msg("🎒 "..text)
 	end
@@ -1406,17 +1420,11 @@ local function ensureAcornGui()
 	-- === Hooks spawn/despawn + Scan Y∈[1;4] ===
 	Workspace.DescendantAdded:Connect(function(inst)
 		local bp = isAcornBasePart(inst)
-		if bp then
-			if bp.Position.Y >= 1 and bp.Position.Y <= 4 then
-				onAcornAppeared(bp)
-			else
-				onAcornAppeared(bp)
-			end
-		end
+		if bp then onAcornAppeared(bp) end
 	end)
 	Workspace.DescendantRemoving:Connect(onAcornDisappeared)
 
-	-- Scan map: meilleur acorn avec Y∈[1;4]
+	-- Scan map: meilleur acorn avec Y∈[1;4] (ou fallback)
 	local function bestAcornCandidateWrap(a, b) return bestAcornCandidate(a, b) end
 	local function scanMapAcorn()
 		local best = nil
@@ -1429,6 +1437,12 @@ local function ensureAcornGui()
 				end
 			end
 		end
+		if not best then
+			for _, obj in ipairs(Workspace:GetDescendants()) do
+				local bp = isAcornBasePart(obj)
+				if bp then best = bestAcornCandidateWrap(best, bp) end
+			end
+		end
 		if best then
 			onAcornAppeared(best)
 			return true, best
@@ -1439,12 +1453,7 @@ local function ensureAcornGui()
 	local function initialScan()
 		local ok = select(1, scanMapAcorn())
 		if not ok then
-			local best = nil
-			for _, obj in ipairs(Workspace:GetDescendants()) do
-				local bp = isAcornBasePart(obj)
-				if bp then best = bestAcornCandidateWrap(best, bp) end
-			end
-			if best then onAcornAppeared(best) end
+			-- rien à faire
 		end
 	end
 
@@ -1459,12 +1468,10 @@ local function ensureAcornGui()
 		if not prompt or not prompt.Parent then return false end
 		local action = lowerOrEmpty(prompt.ActionText)
 		local object = lowerOrEmpty(prompt.ObjectText)
-
 		-- Exclusion Mushroom prioritaire
 		if containsAny(action, ac.config.plantExclude) or containsAny(object, ac.config.plantExclude) then
 			return false
 		end
-
 		for _, kw in ipairs(ac.config.promptTextWhitelist) do
 			if action:find(kw) or object:find(kw) then
 				local node = prompt.Parent
@@ -1477,7 +1484,6 @@ local function ensureAcornGui()
 				return true
 			end
 		end
-
 		local node = prompt
 		local steps = 0
 		while node and steps < 4 do
@@ -1559,7 +1565,7 @@ local function ensureAcornGui()
 							for _, prompt in ipairs(prompts) do
 								pcall(fireproximityprompt, prompt)
 								if prompt.HoldDuration and prompt.HoldDuration > 0 then
-									task.wait(math.min(prompt.HoldDuration, ac.config.promptHoldDuration))
+                                    task.wait(math.min(prompt.HoldDuration, ac.config.promptHoldDuration))
 									pcall(fireproximityprompt, prompt)
 								end
 							end
@@ -1677,7 +1683,8 @@ local function ensureAcornGui()
 	CountdownLabel.TextXAlignment = Enum.TextXAlignment.Center
 	CountdownLabel.Parent = TimerFrame
 
-	local acornCountLabel = Instance.new("TextLabel")
+	-- ⚠️ IMPORTANT : ne pas redéclarer local ici, on veut la même référence que setCount()
+	acornCountLabel = Instance.new("TextLabel")
 	acornCountLabel.Size = UDim2.new(0.5, -10, 0, 40)
 	acornCountLabel.Position = UDim2.new(0.5, 0, 0, 40)
 	acornCountLabel.BackgroundTransparency = 1
@@ -1832,7 +1839,10 @@ local function ensureAcornGui()
 			})
 			selectCurrentAcorn(part)
 			if ac.autoTPOnDetect then
-				task.spawn(function() ac._collectAcorn(part) end)
+				-- 🔒 scan → collecte avec caméra figée mais restauration sûre
+				task.spawn(function()
+					ac._collectAcorn(part)
+				end)
 			end
 		else
 			StarterGui:SetCore("SendNotification", { Title = "🔎 Scan", Text = "Aucun acorn (Y 1–4) trouvé.", Duration = 2 })
@@ -1873,7 +1883,7 @@ local function ensureAcornGui()
 		end
 	end)
 
-	-- CTRL/⌘ + Clic pour TP/Collect
+	-- CTRL/⌘ + Clic pour TP/Collect (no-op sur mobile, ne bloque rien)
 	do
 		local mouse = player:GetMouse()
 		local function metaOrCtrlDown()
@@ -1956,7 +1966,7 @@ local function ensureAcornGui()
 
 	StarterGui:SetCore("SendNotification", {
 		Title = "🌰 Acorn Collector",
-		Text = "TP dur + retour XYZ • Timer 1:49 (Chubby) • ⌘/Ctrl+clic TP • Auto-scan 29s (Y 1–4)",
+		Text = "TP discret (caméra figée) • Timer 1:49 (Chubby) • ⌘/Ctrl+clic TP • Auto-scan 29s (Y 1–4) • Stop harvest si backpack plein",
 		Duration = 4
 	})
 
@@ -1981,4 +1991,4 @@ end
 openAcornBtn.MouseButton1Click:Connect(toggleAcornUI)
 
 -- === Scales + ready msg ===
-msg("✅ Saad helper pack chargé + 🌰 Acorn Collector v2.6 (caméra figée au TP • stop harvest si backpack plein • ignore Mushroom • ⌘/Ctrl+clic • auto-scan 29s • Y 1–4).", Color3.fromRGB(170,230,255))
+msg("✅ Saad helper pack chargé + 🌰 Acorn Collector v2.6 (caméra figée au TP — restauration sûre • stop harvest si backpack plein • ignore Mushroom • ⌘/Ctrl+clic • auto-scan 29s).", Color3.fromRGB(170,230,255))
