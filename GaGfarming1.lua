@@ -1,19 +1,25 @@
--- Saad helper pack v3.0-LITE+AUTO — Player Tuner + Gear Panel + Acorn Collector
--- Fix: le bouton "🛒 Gear Panel" du Player Tuner rouvre bien le panneau (toggle robuste)
---      + boutons de réduction (minimize) pour les 3 fenêtres
---      + auto-buy actif d’office (sans UI)
+-- Saad helper pack v3.1-LITE+AUTO — Player Tuner + Gear Panel + Acorn Collector
+-- Nouveautés :
+-- 1) ✅ UI responsive : s’adapte au Viewport (mobile/tablette/desktop)
+--    - Player Tuner : coin haut-gauche, taille = ~34% largeur / ~36% hauteur (bornée)
+--    - Gear Panel   : coin haut-centre, taille = ~30% largeur / ~42% hauteur (bornée)
+--    - Acorn Panel  : côté droit centré, taille = ~44% largeur / ~66% hauteur (bornée)
+--    - Sur petits écrans, l’Acorn Panel n’occupe plus tout : contenu scrollable (accès au bouton "Scan Now")
+-- 2) ✅ Compteur "Collected" corrigé (bug de redéclaration local) — fonctionne aussi sur mobile LITE
+-- 3) ✅ Auto-buy d’office (sans UI) inchangé
+-- 4) ✅ Minimize pour les 3 fenêtres + bouton Gear depuis Player Tuner (fixé)
 
 --==================================================
 --=================  SETTINGS  =====================
 --==================================================
-local LIGHT_MODE = true                 -- 🟢 LITE activé (mobile-friendly)
+local LIGHT_MODE = true                 -- 🟢 LITE mobile-friendly
 local VERBOSE_LOG = false               -- logs chat réduits
-local UI_REFRESH = 0.6                  -- intervalle MAJ UI (s)
+local UI_REFRESH = 0.6                  -- intervalle MAJ texte UI (s)
 local COORDS_REFRESH = 1.0              -- coords HUD (s)
 local AUTO_SCAN_PERIOD = 33             -- auto-scan (sec)
 local AUTO_HARVEST_TICK = 0.20          -- v2.4 allégé
 local DISABLE_SOUNDS = true             -- pas de sons
-local GC_SWEEP_EVERY = 60               -- collecte mémoire périodique (sec)
+local GC_SWEEP_EVERY = 60               -- GC périodique (sec)
 
 -- Auto-buy (sans UI) — activé d’office
 local AUTO_PERIOD_SEEDS = 150           -- 2:30
@@ -118,9 +124,11 @@ end
 local function makeFrame(parent, size, pos, bg)
 	local f=Instance.new("Frame"); f.Size=size; f.Position=pos; f.BackgroundColor3=bg or Color3.fromRGB(36,36,36); f.BorderSizePixel=0; f.Parent=parent; rounded(f,10); return f
 end
-local function attachMinimize(frame, titleBar, contentFrame, minBtn, fullSize, collapsedHeight)
+
+-- Minimize helper
+local function attachMinimize(frame, contentFrame, minBtn, fullSize, collapsedHeight)
 	local isMin = false
-	local collapsedSize = UDim2.new(fullSize.X.Scale, fullSize.X.Offset, 0, collapsedHeight)
+	local collapsedSize = UDim2.new(0, fullSize.X.Offset, 0, collapsedHeight)
 	local function setMin(v)
 		isMin = v
 		if isMin then
@@ -136,6 +144,84 @@ local function attachMinimize(frame, titleBar, contentFrame, minBtn, fullSize, c
 	minBtn.MouseButton1Click:Connect(function() setMin(not isMin) end)
 	setMin(false)
 	return setMin
+end
+
+-- Responsive sizing & autoscale (UIScale + pixel size by %)
+local function ensureUIScale(screenGui)
+	local u = screenGui:FindFirstChild("AutoScale") or Instance.new("UIScale")
+	u.Name = "AutoScale"
+	u.Parent = screenGui
+	return u
+end
+
+-- Attach responsive behavior to a frame:
+-- opts = { anchor="leftTop"/"rightCenter"/"topCenter", w_pct=0.44, h_pct=0.66, minW=260, minH=220, maxW=560, maxH=620, offset={x=10,y=10} }
+local function makeResponsive(frame, opts)
+	local cam = workspace.CurrentCamera
+	local function apply()
+		if not cam then cam = workspace.CurrentCamera end
+		local vp = (cam and cam.ViewportSize) or Vector2.new(1280, 720)
+		local w = math.clamp(math.floor(vp.X * (opts.w_pct or 0.44)), opts.minW or 260, opts.maxW or 620)
+		local h = math.clamp(math.floor(vp.Y * (opts.h_pct or 0.66)), opts.minH or 220, opts.maxH or 720)
+		frame.Size = UDim2.fromOffset(w, h)
+		local ox = (opts.offset and opts.offset.x) or 10
+		local oy = (opts.offset and opts.offset.y) or 10
+		local anchor = opts.anchor or "rightCenter"
+		if anchor == "leftTop" then
+			frame.Position = UDim2.fromOffset(ox, oy)
+		elseif anchor == "topCenter" then
+			frame.Position = UDim2.fromOffset(math.max(ox, math.floor((vp.X - w)/2)), oy)
+		else -- rightCenter
+			frame.Position = UDim2.fromOffset(math.max(ox, vp.X - w - ox), math.max(oy, math.floor((vp.Y - h)/2)))
+		end
+	end
+	apply()
+	if cam then cam:GetPropertyChangedSignal("ViewportSize"):Connect(apply) end
+	UserInputService:GetPropertyChangedSignal("TouchEnabled"):Connect(apply)
+	return apply
+end
+
+-- Scrolling helper for absolute-positioned content
+local function ensureScrolling(parentFrame, contentFrame)
+	-- Wrap contentFrame into a ScrollingFrame
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Name = "Scroll"
+	scroll.BackgroundTransparency = 1
+	scroll.BorderSizePixel = 0
+	scroll.ScrollBarThickness = 8
+	scroll.ScrollingDirection = Enum.ScrollingDirection.Y
+	scroll.ClipsDescendants = true
+	scroll.Parent = parentFrame
+	scroll.Position = UDim2.new(0, 8, 0, 46)
+	scroll.Size = UDim2.new(1, -16, 1, -56)
+
+	-- Move all children of contentFrame to scroll
+	for _, child in ipairs(contentFrame:GetChildren()) do
+		if child:IsA("GuiObject") then
+			child.Parent = scroll
+		end
+	end
+	contentFrame:Destroy()
+
+	local function updateCanvas()
+		local maxY = 0
+		for _, child in ipairs(scroll:GetChildren()) do
+			if child:IsA("GuiObject") then
+				local y = child.Position.Y.Offset + child.Size.Y.Offset
+				if y > maxY then maxY = y end
+			end
+		end
+		scroll.CanvasSize = UDim2.new(0, 0, 0, maxY + 8)
+	end
+	updateCanvas()
+
+	-- Recompute when viewport or elements change
+	local cam = workspace.CurrentCamera
+	if cam then cam:GetPropertyChangedSignal("ViewportSize"):Connect(updateCanvas) end
+	scroll.ChildAdded:Connect(updateCanvas)
+	scroll.ChildRemoved:Connect(updateCanvas)
+
+	return scroll, updateCanvas
 end
 
 --==================================================
@@ -252,6 +338,7 @@ screenGui.IgnoreGuiInset = false
 screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 screenGui.DisplayOrder = 10
 screenGui.Parent = playerGui
+local scaleMain = ensureUIScale(screenGui)
 
 local function makeDraggable(frame, handle)
 	frame.Active=true; frame.Selectable=true; handle.Active=true; handle.Selectable=true
@@ -275,9 +362,8 @@ local function makeDraggable(frame, handle)
 	end)
 end
 
--- Player Tuner panel (compact) + minimize FIX
-local mainFullSize = UDim2.fromOffset(300, 260)
-local main = makeFrame(screenGui, mainFullSize, UDim2.fromScale(0.02, 0.04), Color3.fromRGB(36,36,36))
+-- Player Tuner panel (responsive) + minimize
+local main = makeFrame(screenGui, UDim2.fromOffset(300, 260), UDim2.fromOffset(20, 20), Color3.fromRGB(36,36,36))
 local title = makeFrame(main, UDim2.new(1,0,0,32), UDim2.fromOffset(0,0), Color3.fromRGB(28,28,28))
 makeLabel(title, "🎚️ PLAYER TUNER (LITE)", UDim2.new(1,-90,1,0), UDim2.new(0,10,0,0), Color3.fromRGB(255,255,255), true)
 local closeBtn    = makeButton(title, "✕", UDim2.fromOffset(26,26), UDim2.new(1,-34,0,3), Color3.fromRGB(255,72,72))
@@ -285,7 +371,9 @@ local minimizeBtn = makeButton(title, "—", UDim2.fromOffset(26,26), UDim2.new(
 
 local content = makeFrame(main, UDim2.new(1,-20,1,-42), UDim2.new(0,10,0,38), Color3.fromRGB(36,36,36)); content.BackgroundTransparency=1
 makeDraggable(main, title)
-attachMinimize(main, title, content, minimizeBtn, mainFullSize, 32) -- ✅ FIX minimize Player Tuner
+local setMainMin = attachMinimize(main, content, minimizeBtn, main.Size, 32)
+-- Responsive sizing for Player Tuner (≈ 34% W, 36% H)
+local applyMainResp = makeResponsive(main, {anchor="leftTop", w_pct=0.34, h_pct=0.36, minW=260, minH=220, maxW=520, maxH=420, offset={x=10,y=10}})
 
 -- sliders simplifiés
 local function simpleSlider(y, labelText, minValue, maxValue, step, initialValue, onChange)
@@ -373,16 +461,19 @@ local gearGui = Instance.new("ScreenGui"); gearGui.Name="GearPanelLite"; gearGui
 gearGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 gearGui.DisplayOrder = 20
 gearGui.Parent=playerGui
+local scaleGear = ensureUIScale(gearGui)
 
-local gearFullSize = UDim2.fromOffset(250, 280)
-local gearFrame = makeFrame(gearGui, gearFullSize, UDim2.fromScale(0.25, 0.05), Color3.fromRGB(50,50,80))
+local gearFrame = makeFrame(gearGui, UDim2.fromOffset(250, 280), UDim2.fromOffset(0,0), Color3.fromRGB(50,50,80))
 local gtitle = makeFrame(gearFrame, UDim2.new(1,0,0,28), UDim2.new(0,0,0,0), Color3.fromRGB(40,40,70))
 makeLabel(gtitle, "🛒 GEAR SHOP (L)", UDim2.new(1,-70,1,0), UDim2.new(0,10,0,0), Color3.fromRGB(255,255,255), true)
 local gclose = makeButton(gtitle, "✕", UDim2.fromOffset(20,20), UDim2.new(1,-26,0,4), Color3.fromRGB(255,72,72))
-local gmin   = makeButton(gtitle, "—", UDim2.fromOffset(20,20), UDim2.new(1,-50,0,4), Color3.fromRGB(110,110,110)) -- ✅ minimize Gear
+local gmin   = makeButton(gtitle, "—", UDim2.fromOffset(20,20), UDim2.new(1,-50,0,4), Color3.fromRGB(110,110,110))
 local gbody  = makeFrame(gearFrame, UDim2.new(1,-12,1,-38), UDim2.new(0,6,0,34), Color3.fromRGB(50,50,80)); gbody.BackgroundTransparency=1
 makeDraggable(gearFrame, gtitle)
-attachMinimize(gearFrame, gtitle, gbody, gmin, gearFullSize, 28) -- ✅
+attachMinimize(gearFrame, gbody, gmin, gearFrame.Size, 28)
+
+-- Responsive sizing for Gear (≈ 30% W, 42% H) en haut-centre
+local applyGearResp = makeResponsive(gearFrame, {anchor="topCenter", w_pct=0.30, h_pct=0.42, minW=240, minH=220, maxW=520, maxH=520, offset={x=10,y=10}})
 
 local tpGear  = makeButton(gbody, "📍 TP GEAR SHOP",      UDim2.new(1,0,0,28), UDim2.new(0,0,0,0),   Color3.fromRGB(60,180,60))
 local sellBtn = makeButton(gbody, "🧺 SELL INVENTORY",    UDim2.new(1,0,0,28), UDim2.new(0,0,0,32),  Color3.fromRGB(200,130,90))
@@ -393,7 +484,7 @@ local evoBtn  = makeButton(gbody, "🍁 BUY EVO (x1)",      UDim2.new(1,0,0,28),
 local eggsBtn = makeButton(gbody, "🥚 BUY EGGS",          UDim2.new(1,0,0,28), UDim2.new(0,0,0,192), Color3.fromRGB(150,120,200))
 local coordsLabel = makeLabel(gbody, "Position: (…)",     UDim2.new(1,0,0,18), UDim2.new(0,0,0,224), Color3.fromRGB(200,200,255), false)
 
--- ✅ Toggle robuste (utilisé partout)
+-- Toggle robuste pour Gear
 local function toggleGearPanel(forceOpen)
 	if not gearFrame or not gearFrame.Parent then return end
 	if forceOpen == true then
@@ -404,13 +495,11 @@ local function toggleGearPanel(forceOpen)
 		gearGui.Enabled = true
 		gearFrame.Visible = nextState
 	end
-	if gearFrame.Visible then
-		clampOnScreen(gearFrame)
-	end
+	if gearFrame.Visible then clampOnScreen(gearFrame) end
 end
 
 gclose.MouseButton1Click:Connect(function() gearFrame.Visible=false end)
-gearBtn.MouseButton1Click:Connect(function() toggleGearPanel() end) -- ✅ depuis Player Tuner
+gearBtn.MouseButton1Click:Connect(function() toggleGearPanel() end)
 tpGear.MouseButton1Click:Connect(function() teleportTo(GEAR_SHOP_POS) end)
 sellBtn.MouseButton1Click:Connect(function()
 	local r = getSellInventoryRemote(); if not r then return end
@@ -563,9 +652,13 @@ local function ensureAcornGui()
 		return nil
 	end
 
-	-- Sélection + compteur (sans ESP en LITE)
-	local acornCountLabel
-	local function setCount(n) if acornCountLabel then acornCountLabel.Text=("🥜 Collected: %d"):format(n or 0) end end
+	-- Sélection + compteur (⚠️ un SEUL identifiant partagé)
+	ac.uiCountLabel = nil -- <— pas de redéclaration locale plus bas !
+	local function setCount(n)
+		if ac.uiCountLabel then
+			ac.uiCountLabel.Text = ("🥜 Collected: %d"):format(n or 0)
+		end
+	end
 	local function selectCurrentAcorn(candidate)
 		if not candidate or not candidate.Parent then return end
 		if not ac.currentAcorn or not ac.currentAcorn.Parent then
@@ -680,7 +773,7 @@ local function ensureAcornGui()
 		while true do
 			if ac.autoHarvestEnabled then
 				if ac.config.stopHarvestWhenBackpackFull then
-					local full,c,_ = isBackpackFull()
+					local full = isBackpackFull()
 					if full then
 						ac.autoHarvestEnabled=false
 					else
@@ -701,37 +794,50 @@ local function ensureAcornGui()
 		end
 	end)
 
-	-- UI (compact) + ✅ Minimize
+	-- UI (responsive + scroll)
 	acornGui = Instance.new("ScreenGui"); acornGui.Name="AcornLite"; acornGui.ResetOnSpawn=false; acornGui.IgnoreGuiInset=false
 	acornGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	acornGui.DisplayOrder = 15
 	acornGui.Parent=playerGui
+	local scaleAcorn = ensureUIScale(acornGui)
 
-	local acFull = UDim2.new(0, 320, 0, 420)
-	local Main = makeFrame(acornGui, acFull, UDim2.new(1,-330,0.5,-210), Color3.fromRGB(25,25,30))
+	local Main = makeFrame(acornGui, UDim2.fromOffset(320, 420), UDim2.fromOffset(0,0), Color3.fromRGB(25,25,30))
 	local Header = makeFrame(Main, UDim2.new(1,0,0,40), UDim2.new(0,0,0,0), Color3.fromRGB(30,30,38))
 	makeLabel(Header, "🌰 Acorn Collector (L)", UDim2.new(1,-90,1,0), UDim2.new(0,12,0,0), Color3.fromRGB(255,200,0), true)
 	local Close = makeButton(Header, "✖", UDim2.fromOffset(28,28), UDim2.new(1,-34,0.5,-14), Color3.fromRGB(220,50,50))
-	local Min   = makeButton(Header, "—", UDim2.fromOffset(28,28), UDim2.new(1,-66,0.5,-14), Color3.fromRGB(110,110,110)) -- ✅ minimize Acorn
-	local Body  = makeFrame(Main, UDim2.new(1,-16,1,-52), UDim2.new(0,8,0,46), Color3.fromRGB(25,25,30)); Body.BackgroundTransparency=1
-	makeDraggable(Main, Header)
-	attachMinimize(Main, Header, Body, Min, acFull, 40) -- ✅
+	local Min   = makeButton(Header, "—", UDim2.fromOffset(28,28), UDim2.new(1,-66,0.5,-14), Color3.fromRGB(110,110,110))
 
-	local TimerBox = makeFrame(Body, UDim2.new(1,0,0,90), UDim2.new(0,0,0,0), Color3.fromRGB(35,35,42))
+	-- Contenu initial (sera scrollable)
+	local Body = makeFrame(Main, UDim2.new(1,-16,1,-52), UDim2.new(0,8,0,46), Color3.fromRGB(25,25,30)); Body.BackgroundTransparency=1
+	local Scroll, updateCanvas = ensureScrolling(Main, Body) -- remplace Body par Scroll (contient le même contenu)
+
+	local TimerBox = makeFrame(Scroll, UDim2.new(1,0,0,90), UDim2.new(0,0,0,0), Color3.fromRGB(35,35,42))
 	makeLabel(TimerBox, "⏱️ Prochain spawn (Chubby):", UDim2.new(1,-20,0,24), UDim2.new(0,10,0,6), Color3.fromRGB(255,255,255), true)
 	local Countdown = makeLabel(TimerBox, "01:49", UDim2.new(0.5,-10,0,40), UDim2.new(0,8,0,40), Color3.fromRGB(255,200,0), false); Countdown.TextXAlignment=Enum.TextXAlignment.Center; Countdown.TextSize=28
-	local acornCountLabel = makeLabel(TimerBox, "🥜 Collected: 0", UDim2.new(0.5,-10,0,40), UDim2.new(0.5,2,0,40), Color3.fromRGB(180,230,180), true); acornCountLabel.TextXAlignment=Enum.TextXAlignment.Center; acornCountLabel.TextSize=18
+	ac.uiCountLabel = makeLabel(TimerBox, "🥜 Collected: 0", UDim2.new(0.5,-10,0,40), UDim2.new(0.5,2,0,40), Color3.fromRGB(180,230,180), true); ac.uiCountLabel.TextXAlignment=Enum.TextXAlignment.Center; ac.uiCountLabel.TextSize=18
 
-	local StatusBox = makeFrame(Body, UDim2.new(1,0,0,50), UDim2.new(0,0,0,96), Color3.fromRGB(35,35,42))
+	local StatusBox = makeFrame(Scroll, UDim2.new(1,0,0,50), UDim2.new(0,0,0,96), Color3.fromRGB(35,35,42))
 	local Status = makeLabel(StatusBox, "📍 Status: En veille…", UDim2.new(1,-20,1,-8), UDim2.new(0,10,0,4), Color3.fromRGB(200,200,200), false)
 
-	local AutoCollectBtn = makeButton(Body, "🤖 Auto Collect: ON", UDim2.new(1,0,0,40), UDim2.new(0,0,0,154), Color3.fromRGB(60,200,60))
-	local AutoTPBtn      = makeButton(Body, "⚡ Auto TP on Detect: ON", UDim2.new(1,0,0,40), UDim2.new(0,0,0,198), Color3.fromRGB(60,200,60))
-	local AutoHarvestBtn = makeButton(Body, "🌾 Auto Harvest (plantes): OFF", UDim2.new(1,0,0,40), UDim2.new(0,0,0,242), Color3.fromRGB(200,120,60))
+	local AutoCollectBtn = makeButton(Scroll, "🤖 Auto Collect: ON", UDim2.new(1,0,0,40), UDim2.new(0,0,0,154), Color3.fromRGB(60,200,60))
+	local AutoTPBtn      = makeButton(Scroll, "⚡ Auto TP on Detect: ON", UDim2.new(1,0,0,40), UDim2.new(0,0,0,198), Color3.fromRGB(60,200,60))
+	local AutoHarvestBtn = makeButton(Scroll, "🌾 Auto Harvest (plantes): OFF", UDim2.new(1,0,0,40), UDim2.new(0,0,0,242), Color3.fromRGB(200,120,60))
 
-	local ScanRow   = makeFrame(Body, UDim2.new(1,0,0,40), UDim2.new(0,0,0,286), Color3.fromRGB(25,25,30)); ScanRow.BackgroundTransparency=1
+	local ScanRow   = makeFrame(Scroll, UDim2.new(1,0,0,40), UDim2.new(0,0,0,286), Color3.fromRGB(25,25,30)); ScanRow.BackgroundTransparency=1
 	local ScanNow   = makeButton(ScanRow, "🔎 Scan Now (Y 1–4)", UDim2.new(0.48,-4,1,0), UDim2.new(0,0,0,0), Color3.fromRGB(90,140,210))
 	local AutoScan  = makeButton(ScanRow, "📡 Auto-scan: OFF ("..tostring(ac.scanPeriod).."s)", UDim2.new(0.52,0,1,0), UDim2.new(0.48,4,0,0), Color3.fromRGB(80,100,140))
+
+	makeDraggable(Main, Header)
+	attachMinimize(Main, Scroll, Min, Main.Size, 40)
+
+	-- Responsive sizing for Acorn (≈ 44% W, 66% H) côté droit, contenu scrollable si trop petit
+	local function applyAcornResp()
+		makeResponsive(Main, {anchor="rightCenter", w_pct=0.44, h_pct=0.66, minW=280, minH=280, maxW=640, maxH=720, offset={x=10,y=10}})()
+		updateCanvas()
+	end
+	applyAcornResp()
+	local cam = workspace.CurrentCamera
+	if cam then cam:GetPropertyChangedSignal("ViewportSize"):Connect(applyAcornResp) end
 
 	Close.MouseButton1Click:Connect(function() acornGui.Enabled=false end)
 	AutoCollectBtn.MouseButton1Click:Connect(function() -- alias de TP on detect
@@ -828,6 +934,26 @@ end)
 --==================================================
 --===========  RESPAWN / GC / INIT  ================
 --==================================================
+local function applyGlobalScale()
+	-- UIScale pour lisibilité : écran petit -> réduit légèrement
+	local cam = workspace.CurrentCamera
+	local vp = (cam and cam.ViewportSize) or Vector2.new(1280,720)
+	local baseW = 1280
+	local s = vp.X / baseW
+	if vp.Y < 720 or vp.X < 1100 then s = s * 0.92 end
+	if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then s = s * 0.90 end
+	s = math.clamp(s, 0.70, 1.0)
+	scaleMain.Scale = s
+	scaleGear.Scale = s
+	local ac = playerGui:FindFirstChild("AcornLite")
+	if ac then local u = ac:FindFirstChild("AutoScale"); if u then u.Scale = s end end
+end
+applyGlobalScale()
+local cam0 = workspace.CurrentCamera
+if cam0 then cam0:GetPropertyChangedSignal("ViewportSize"):Connect(applyGlobalScale) end
+UserInputService:GetPropertyChangedSignal("TouchEnabled"):Connect(applyGlobalScale)
+UserInputService:GetPropertyChangedSignal("KeyboardEnabled"):Connect(applyGlobalScale)
+
 applySpeed(currentSpeed); applyGravity(currentGravity); applyJump(currentJump)
 player.CharacterAdded:Connect(function(char)
 	char:WaitForChild("HumanoidRootPart", 5)
@@ -844,3 +970,6 @@ task.spawn(function()
 		pcall(function() collectgarbage("collect") end)
 	end
 end)
+
+-- Bouton Player → Gear Panel (rappel)
+gearBtn.MouseButton1Click:Connect(function() toggleGearPanel() end)
