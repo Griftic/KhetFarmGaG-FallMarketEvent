@@ -7,7 +7,9 @@
 --    - Sur petits écrans, l’Acorn Panel n’occupe plus tout : contenu scrollable (accès au bouton "Scan Now")
 -- 2) ✅ Compteur "Collected" corrigé (bug de redéclaration local) — fonctionne aussi sur mobile LITE
 -- 3) ✅ Auto-buy d’office (sans UI) inchangé
--- 4) ✅ Minimize pour les 3 fenêtres + bouton Gear depuis Player Tuner (fixé)
+-- 4) ✅ Minimize pour les 3 fenêtres + bouton Gear depuis Player Tuner (fix réouverture)
+-- 5) ✅ Auto-scan 15s et activé d’office ; Auto-Harvest = OFF au départ
+-- 6) ✅ Auto-Harvest "100 tentatives" : se coupe automatiquement (et si backpack plein)
 
 --==================================================
 --=================  SETTINGS  =====================
@@ -16,7 +18,7 @@ local LIGHT_MODE = true                 -- 🟢 LITE mobile-friendly
 local VERBOSE_LOG = false               -- logs chat réduits
 local UI_REFRESH = 0.6                  -- intervalle MAJ texte UI (s)
 local COORDS_REFRESH = 1.0              -- coords HUD (s)
-local AUTO_SCAN_PERIOD = 33             -- auto-scan (sec)
+local AUTO_SCAN_PERIOD = 15             -- ⏱️ auto-scan (sec) — DEMANDÉ: 15s
 local AUTO_HARVEST_TICK = 0.20          -- v2.4 allégé
 local DISABLE_SOUNDS = true             -- pas de sons
 local GC_SWEEP_EVERY = 60               -- GC périodique (sec)
@@ -183,7 +185,6 @@ end
 
 -- Scrolling helper for absolute-positioned content
 local function ensureScrolling(parentFrame, contentFrame)
-	-- Wrap contentFrame into a ScrollingFrame
 	local scroll = Instance.new("ScrollingFrame")
 	scroll.Name = "Scroll"
 	scroll.BackgroundTransparency = 1
@@ -195,7 +196,6 @@ local function ensureScrolling(parentFrame, contentFrame)
 	scroll.Position = UDim2.new(0, 8, 0, 46)
 	scroll.Size = UDim2.new(1, -16, 1, -56)
 
-	-- Move all children of contentFrame to scroll
 	for _, child in ipairs(contentFrame:GetChildren()) do
 		if child:IsA("GuiObject") then
 			child.Parent = scroll
@@ -215,7 +215,6 @@ local function ensureScrolling(parentFrame, contentFrame)
 	end
 	updateCanvas()
 
-	-- Recompute when viewport or elements change
 	local cam = workspace.CurrentCamera
 	if cam then cam:GetPropertyChangedSignal("ViewportSize"):Connect(updateCanvas) end
 	scroll.ChildAdded:Connect(updateCanvas)
@@ -253,9 +252,9 @@ local function withFrozenCamera(fn)
 	camFreezeBusy = false
 end
 
--- Anti-AFK simple
+-- Anti-AFK simple (⚠️ ON par défaut)
 local ANTI_AFK_PERIOD, ANTI_AFK_DURATION = 60, 0.35
-local antiAFKEnabled = false
+local antiAFKEnabled = true  -- DEMANDÉ: ON au lancement
 player.Idled:Connect(function()
 	pcall(function()
 		VirtualUser:CaptureController()
@@ -372,7 +371,7 @@ local minimizeBtn = makeButton(title, "—", UDim2.fromOffset(26,26), UDim2.new(
 local content = makeFrame(main, UDim2.new(1,-20,1,-42), UDim2.new(0,10,0,38), Color3.fromRGB(36,36,36)); content.BackgroundTransparency=1
 makeDraggable(main, title)
 local setMainMin = attachMinimize(main, content, minimizeBtn, main.Size, 32)
--- Responsive sizing for Player Tuner (≈ 34% W, 36% H)
+-- Responsive sizing pour Player Tuner (≈ 34% W, 36% H)
 local applyMainResp = makeResponsive(main, {anchor="leftTop", w_pct=0.34, h_pct=0.36, minW=260, minH=220, maxW=520, maxH=420, offset={x=10,y=10}})
 
 -- sliders simplifiés
@@ -448,6 +447,12 @@ closeBtn.MouseButton1Click:Connect(function()
 	if isNoclipping then isNoclipping=false; if noclipConnection then noclipConnection:Disconnect(); end end
 	if screenGui then screenGui:Destroy() end
 end)
+
+-- Synchro état initial Anti-AFK (ON au lancement)
+if antiAFKEnabled then
+	antiAFKBtn.Text = "🛡️ Anti-AFK: ON"
+	antiAFKBtn.BackgroundColor3 = Color3.fromRGB(80,140,90)
+end
 antiAFKBtn.MouseButton1Click:Connect(function()
 	antiAFKEnabled = not antiAFKEnabled
 	antiAFKBtn.Text = antiAFKEnabled and "🛡️ Anti-AFK: ON" or "🛡️ Anti-AFK: OFF"
@@ -472,7 +477,7 @@ local gbody  = makeFrame(gearFrame, UDim2.new(1,-12,1,-38), UDim2.new(0,6,0,34),
 makeDraggable(gearFrame, gtitle)
 attachMinimize(gearFrame, gbody, gmin, gearFrame.Size, 28)
 
--- Responsive sizing for Gear (≈ 30% W, 42% H) en haut-centre
+-- Responsive sizing pour Gear (≈ 30% W, 42% H) en haut-centre
 local applyGearResp = makeResponsive(gearFrame, {anchor="topCenter", w_pct=0.30, h_pct=0.42, minW=240, minH=220, maxW=520, maxH=520, offset={x=10,y=10}})
 
 local tpGear  = makeButton(gbody, "📍 TP GEAR SHOP",      UDim2.new(1,0,0,28), UDim2.new(0,0,0,0),   Color3.fromRGB(60,180,60))
@@ -484,22 +489,22 @@ local evoBtn  = makeButton(gbody, "🍁 BUY EVO (x1)",      UDim2.new(1,0,0,28),
 local eggsBtn = makeButton(gbody, "🥚 BUY EGGS",          UDim2.new(1,0,0,28), UDim2.new(0,0,0,192), Color3.fromRGB(150,120,200))
 local coordsLabel = makeLabel(gbody, "Position: (…)",     UDim2.new(1,0,0,18), UDim2.new(0,0,0,224), Color3.fromRGB(200,200,255), false)
 
--- Toggle robuste pour Gear
+-- Toggle / Force-Open robuste pour Gear
 local function toggleGearPanel(forceOpen)
 	if not gearFrame or not gearFrame.Parent then return end
+	gearGui.Enabled = true
 	if forceOpen == true then
-		gearGui.Enabled = true
 		gearFrame.Visible = true
 	else
-		local nextState = not gearFrame.Visible
-		gearGui.Enabled = true
-		gearFrame.Visible = nextState
+		gearFrame.Visible = not gearFrame.Visible
 	end
 	if gearFrame.Visible then clampOnScreen(gearFrame) end
 end
 
 gclose.MouseButton1Click:Connect(function() gearFrame.Visible=false end)
-gearBtn.MouseButton1Click:Connect(function() toggleGearPanel() end)
+-- ⚠️ DEMANDÉ: le bouton du Player Tuner rouvre toujours
+gearBtn.MouseButton1Click:Connect(function() toggleGearPanel(true) end)
+
 tpGear.MouseButton1Click:Connect(function() teleportTo(GEAR_SHOP_POS) end)
 sellBtn.MouseButton1Click:Connect(function()
 	local r = getSellInventoryRemote(); if not r then return end
@@ -558,13 +563,16 @@ local function ensureAcornGui()
 
 	ac.nextSpawnTime = tick() + ac.config.normalSpawnInterval
 	ac.currentAcorn = nil
-	ac.autoTPOnDetect = true
-	ac.autoHarvestEnabled = false
+	ac.autoTPOnDetect = true            -- ON par défaut
+	ac.autoHarvestEnabled = false       -- OFF par défaut (DEMANDÉ)
 	ac.isNuttyFever = false
 	ac.feverLastSeenAt = 0
 	ac.acornCollected = 0
-	ac.scanAutoEnabled = false
-	ac.scanPeriod = AUTO_SCAN_PERIOD
+	ac.scanAutoEnabled = true           -- DEMANDÉ: Auto-scan ON par défaut
+	ac.scanPeriod = AUTO_SCAN_PERIOD    -- 15s
+	-- Limite Auto-Harvest (100 tentatives)
+	ac.harvestLimit = 100
+	ac.harvestAttempts = 0
 
 	-- Backpack auto-detect
 	ac.backpackCountValue, ac.backpackCapValue = nil, nil
@@ -619,7 +627,6 @@ local function ensureAcornGui()
 		TweenService:Create(hrp, TweenInfo.new(travelTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(position)}):Play()
 	end
 
-	-- Choix du meilleur acorn
 	local function isYAlignedWithPlayer(acornPart)
 		local hrp = getHRP(); if not hrp or not acornPart then return false end
 		return math.abs(acornPart.Position.Y - hrp.Position.Y) <= ac.config.feverYTolerance
@@ -652,8 +659,8 @@ local function ensureAcornGui()
 		return nil
 	end
 
-	-- Sélection + compteur (⚠️ un SEUL identifiant partagé)
-	ac.uiCountLabel = nil -- <— pas de redéclaration locale plus bas !
+	-- Sélection + compteur
+	ac.uiCountLabel = nil
 	local function setCount(n)
 		if ac.uiCountLabel then
 			ac.uiCountLabel.Text = ("🥜 Collected: %d"):format(n or 0)
@@ -698,7 +705,6 @@ local function ensureAcornGui()
 		end
 	end
 
-	-- Hooks spawn/despawn
 	Workspace.DescendantAdded:Connect(function(inst) local bp=isAcornBasePart(inst); if bp then onAcornAppeared(bp) end end)
 	Workspace.DescendantRemoving:Connect(onAcornDisappeared)
 
@@ -722,7 +728,7 @@ local function ensureAcornGui()
 		return false, nil
 	end
 
-	-- AUTO HARVEST (v2.4 light)
+	-- AUTO HARVEST (v2.4 light) + LIMIT 100
 	local function lower(s) if typeof(s)=="string" then return string.lower(s) end return "" end
 	local function containsAny(s, list) for _,kw in ipairs(list) do if s:find(kw) then return true end end return false end
 	local function isPlantPrompt(prompt)
@@ -751,6 +757,34 @@ local function ensureAcornGui()
 		return false
 	end
 
+	local AutoCollectBtn, AutoTPBtn, AutoHarvestBtn, AutoScan -- forward UI refs
+	local function refreshButtons()
+		if AutoCollectBtn and AutoTPBtn then
+			local on = ac.autoTPOnDetect
+			local cOn, cOff = Color3.fromRGB(60,200,60), Color3.fromRGB(200,60,60)
+			AutoCollectBtn.BackgroundColor3 = on and cOn or cOff
+			AutoTPBtn.BackgroundColor3      = on and cOn or cOff
+			AutoCollectBtn.Text = on and "🤖 Auto Collect: ON" or "🤖 Auto Collect: OFF"
+			AutoTPBtn.Text      = on and "⚡ Auto TP on Detect: ON" or "⚡ Auto TP on Detect: OFF"
+		end
+		if AutoHarvestBtn then
+			local cOn = Color3.fromRGB(100,180,80); local cOff = Color3.fromRGB(200,120,60)
+			if ac.autoHarvestEnabled then
+				local left = math.max(0, ac.harvestLimit - ac.harvestAttempts)
+				AutoHarvestBtn.BackgroundColor3 = cOn
+				AutoHarvestBtn.Text = ("🌾 Auto Harvest (plantes): ON  • tries left=%d"):format(left)
+			else
+				AutoHarvestBtn.BackgroundColor3 = cOff
+				AutoHarvestBtn.Text = "🌾 Auto Harvest (plantes): OFF"
+			end
+		end
+		if AutoScan then
+			local cOn = Color3.fromRGB(110,150,90); local cOff = Color3.fromRGB(80,100,140)
+			AutoScan.BackgroundColor3 = ac.scanAutoEnabled and cOn or cOff
+			AutoScan.Text = (ac.scanAutoEnabled and "📡 Auto-scan: ON (" or "📡 Auto-scan: OFF (")..tostring(ac.scanPeriod).."s)"
+		end
+	end
+
 	local function getNearbyPlantPrompts(radius)
 		local prompts = {}
 		local hrp=getHRP(); if not hrp then return prompts end
@@ -772,18 +806,25 @@ local function ensureAcornGui()
 	task.spawn(function()
 		while true do
 			if ac.autoHarvestEnabled then
-				if ac.config.stopHarvestWhenBackpackFull then
-					local full = isBackpackFull()
-					if full then
-						ac.autoHarvestEnabled=false
-					else
-						local prompts = ac.config.autoHarvestUsePrompts and getNearbyPlantPrompts(ac.config.autoHarvestRadius) or {}
-						for _, prompt in ipairs(prompts) do
+				-- stop si backpack plein
+				if ac.config.stopHarvestWhenBackpackFull and isBackpackFull() then
+					ac.autoHarvestEnabled=false
+					refreshButtons()
+				else
+					-- tente jusqu'à la limite
+					local prompts = ac.config.autoHarvestUsePrompts and getNearbyPlantPrompts(ac.config.autoHarvestRadius) or {}
+					for _, prompt in ipairs(prompts) do
+						if not ac.autoHarvestEnabled then break end
+						if ac.harvestAttempts >= ac.harvestLimit then
+							ac.autoHarvestEnabled = false
+							refreshButtons()
+							break
+						end
+						ac.harvestAttempts += 1
+						pcall(fireproximityprompt, prompt)
+						if prompt.HoldDuration and prompt.HoldDuration > 0 then
+							task.wait(math.min(prompt.HoldDuration, ac.config.promptHoldDuration))
 							pcall(fireproximityprompt, prompt)
-							if prompt.HoldDuration and prompt.HoldDuration > 0 then
-								task.wait(math.min(prompt.HoldDuration, ac.config.promptHoldDuration))
-								pcall(fireproximityprompt, prompt)
-							end
 						end
 					end
 				end
@@ -807,9 +848,8 @@ local function ensureAcornGui()
 	local Close = makeButton(Header, "✖", UDim2.fromOffset(28,28), UDim2.new(1,-34,0.5,-14), Color3.fromRGB(220,50,50))
 	local Min   = makeButton(Header, "—", UDim2.fromOffset(28,28), UDim2.new(1,-66,0.5,-14), Color3.fromRGB(110,110,110))
 
-	-- Contenu initial (sera scrollable)
 	local Body = makeFrame(Main, UDim2.new(1,-16,1,-52), UDim2.new(0,8,0,46), Color3.fromRGB(25,25,30)); Body.BackgroundTransparency=1
-	local Scroll, updateCanvas = ensureScrolling(Main, Body) -- remplace Body par Scroll (contient le même contenu)
+	local Scroll, updateCanvas = ensureScrolling(Main, Body)
 
 	local TimerBox = makeFrame(Scroll, UDim2.new(1,0,0,90), UDim2.new(0,0,0,0), Color3.fromRGB(35,35,42))
 	makeLabel(TimerBox, "⏱️ Prochain spawn (Chubby):", UDim2.new(1,-20,0,24), UDim2.new(0,10,0,6), Color3.fromRGB(255,255,255), true)
@@ -819,54 +859,55 @@ local function ensureAcornGui()
 	local StatusBox = makeFrame(Scroll, UDim2.new(1,0,0,50), UDim2.new(0,0,0,96), Color3.fromRGB(35,35,42))
 	local Status = makeLabel(StatusBox, "📍 Status: En veille…", UDim2.new(1,-20,1,-8), UDim2.new(0,10,0,4), Color3.fromRGB(200,200,200), false)
 
-	local AutoCollectBtn = makeButton(Scroll, "🤖 Auto Collect: ON", UDim2.new(1,0,0,40), UDim2.new(0,0,0,154), Color3.fromRGB(60,200,60))
-	local AutoTPBtn      = makeButton(Scroll, "⚡ Auto TP on Detect: ON", UDim2.new(1,0,0,40), UDim2.new(0,0,0,198), Color3.fromRGB(60,200,60))
-	local AutoHarvestBtn = makeButton(Scroll, "🌾 Auto Harvest (plantes): OFF", UDim2.new(1,0,0,40), UDim2.new(0,0,0,242), Color3.fromRGB(200,120,60))
+	local AutoCollectBtn_local = makeButton(Scroll, "🤖 Auto Collect: ON", UDim2.new(1,0,0,40), UDim2.new(0,0,0,154), Color3.fromRGB(60,200,60))
+	local AutoTPBtn_local      = makeButton(Scroll, "⚡ Auto TP on Detect: ON", UDim2.new(1,0,0,40), UDim2.new(0,0,0,198), Color3.fromRGB(60,200,60))
+	local AutoHarvestBtn_local = makeButton(Scroll, "🌾 Auto Harvest (plantes): OFF", UDim2.new(1,0,0,40), UDim2.new(0,0,0,242), Color3.fromRGB(200,120,60))
 
 	local ScanRow   = makeFrame(Scroll, UDim2.new(1,0,0,40), UDim2.new(0,0,0,286), Color3.fromRGB(25,25,30)); ScanRow.BackgroundTransparency=1
 	local ScanNow   = makeButton(ScanRow, "🔎 Scan Now (Y 1–4)", UDim2.new(0.48,-4,1,0), UDim2.new(0,0,0,0), Color3.fromRGB(90,140,210))
-	local AutoScan  = makeButton(ScanRow, "📡 Auto-scan: OFF ("..tostring(ac.scanPeriod).."s)", UDim2.new(0.52,0,1,0), UDim2.new(0.48,4,0,0), Color3.fromRGB(80,100,140))
+	local AutoScan_local  = makeButton(ScanRow, "📡 Auto-scan: ON ("..tostring(ac.scanPeriod).."s)", UDim2.new(0.52,0,1,0), UDim2.new(0.48,4,0,0), Color3.fromRGB(110,150,90))
+
+	-- lier refs
+	AutoCollectBtn, AutoTPBtn, AutoHarvestBtn, AutoScan = AutoCollectBtn_local, AutoTPBtn_local, AutoHarvestBtn_local, AutoScan_local
 
 	makeDraggable(Main, Header)
 	attachMinimize(Main, Scroll, Min, Main.Size, 40)
 
-	-- Responsive sizing for Acorn (≈ 44% W, 66% H) côté droit, contenu scrollable si trop petit
+	-- Responsive Acorn + scroll
 	local function applyAcornResp()
 		makeResponsive(Main, {anchor="rightCenter", w_pct=0.44, h_pct=0.66, minW=280, minH=280, maxW=640, maxH=720, offset={x=10,y=10}})()
 		updateCanvas()
+		refreshButtons()
 	end
 	applyAcornResp()
 	local cam = workspace.CurrentCamera
 	if cam then cam:GetPropertyChangedSignal("ViewportSize"):Connect(applyAcornResp) end
 
 	Close.MouseButton1Click:Connect(function() acornGui.Enabled=false end)
-	AutoCollectBtn.MouseButton1Click:Connect(function() -- alias de TP on detect
+
+	-- Boutons (syncs)
+	AutoCollectBtn.MouseButton1Click:Connect(function()
 		ac.autoTPOnDetect = not ac.autoTPOnDetect
-		AutoCollectBtn.BackgroundColor3 = ac.autoTPOnDetect and Color3.fromRGB(60,200,60) or Color3.fromRGB(200,60,60)
-		AutoCollectBtn.Text = ac.autoTPOnDetect and "🤖 Auto Collect: ON" or "🤖 Auto Collect: OFF"
-		AutoTPBtn.BackgroundColor3 = AutoCollectBtn.BackgroundColor3
-		AutoTPBtn.Text = ac.autoTPOnDetect and "⚡ Auto TP on Detect: ON" or "⚡ Auto TP on Detect: OFF"
+		refreshButtons()
 	end)
 	AutoTPBtn.MouseButton1Click:Connect(function()
 		ac.autoTPOnDetect = not ac.autoTPOnDetect
-		AutoTPBtn.BackgroundColor3 = ac.autoTPOnDetect and Color3.fromRGB(60,200,60) or Color3.fromRGB(200,60,60)
-		AutoTPBtn.Text = ac.autoTPOnDetect and "⚡ Auto TP on Detect: ON" or "⚡ Auto TP on Detect: OFF"
-		AutoCollectBtn.BackgroundColor3 = AutoTPBtn.BackgroundColor3
-		AutoCollectBtn.Text = ac.autoTPOnDetect and "🤖 Auto Collect: ON" or "🤖 Auto Collect: OFF"
+		refreshButtons()
 	end)
 	AutoHarvestBtn.MouseButton1Click:Connect(function()
 		ac.autoHarvestEnabled = not ac.autoHarvestEnabled
-		AutoHarvestBtn.BackgroundColor3 = ac.autoHarvestEnabled and Color3.fromRGB(100,180,80) or Color3.fromRGB(200,120,60)
-		AutoHarvestBtn.Text = ac.autoHarvestEnabled and ("🌾 Auto Harvest (plantes): ON  • r="..tostring(ac.config.autoHarvestRadius)) or "🌾 Auto Harvest (plantes): OFF"
+		if ac.autoHarvestEnabled then
+			ac.harvestAttempts = 0 -- reset compteur à chaque activation
+		end
+		refreshButtons()
 	end)
 	ScanNow.MouseButton1Click:Connect(function() scanMapAcorn() end)
 	AutoScan.MouseButton1Click:Connect(function()
 		ac.scanAutoEnabled = not ac.scanAutoEnabled
-		AutoScan.BackgroundColor3 = ac.scanAutoEnabled and Color3.fromRGB(110,150,90) or Color3.fromRGB(80,100,140)
-		AutoScan.Text = ac.scanAutoEnabled and ("📡 Auto-scan: ON ("..tostring(ac.scanPeriod).."s)") or ("📡 Auto-scan: OFF ("..tostring(ac.scanPeriod).."s)")
+		refreshButtons()
 	end)
 
-	-- Tick UI allégé
+	-- Tick UI
 	task.spawn(function()
 		while acornGui and acornGui.Parent do
 			if not acornGui.Enabled then task.wait(0.3) else
@@ -879,12 +920,13 @@ local function ensureAcornGui()
 					Status.Text = "📍 Status: En veille / évènementiel"
 					Status.TextColor3 = Color3.fromRGB(200,200,200)
 				end
+				refreshButtons()
 				task.wait(UI_REFRESH)
 			end
 		end
 	end)
 
-	-- Auto-scan worker (light)
+	-- Auto-scan worker
 	task.spawn(function()
 		while acornGui and acornGui.Parent do
 			if ac.scanAutoEnabled then
@@ -935,7 +977,6 @@ end)
 --===========  RESPAWN / GC / INIT  ================
 --==================================================
 local function applyGlobalScale()
-	-- UIScale pour lisibilité : écran petit -> réduit légèrement
 	local cam = workspace.CurrentCamera
 	local vp = (cam and cam.ViewportSize) or Vector2.new(1280,720)
 	local baseW = 1280
@@ -971,5 +1012,5 @@ task.spawn(function()
 	end
 end)
 
--- Bouton Player → Gear Panel (rappel)
-gearBtn.MouseButton1Click:Connect(function() toggleGearPanel() end)
+-- Bouton Player → Gear Panel (rappel forcé)
+gearBtn.MouseButton1Click:Connect(function() toggleGearPanel(true) end)
