@@ -72,6 +72,10 @@ local function getHRP()
 	local c = player.Character
 	return c and c:FindFirstChild("HumanoidRootPart")
 end
+local function getHumanoid()
+	local c = player.Character
+	return c and c:FindFirstChildOfClass("Humanoid")
+end
 
 local function fmtTime(sec)
 	sec = math.max(0, math.floor(sec + 0.5))
@@ -131,100 +135,75 @@ local function makeFrame(parent, size, pos, bg)
 	local f=Instance.new("Frame"); f.Size=size; f.Position=pos; f.BackgroundColor3=bg or Color3.fromRGB(36,36,36); f.BorderSizePixel=0; f.Parent=parent; rounded(f,10); return f
 end
 
--- Minimize helper
-local function attachMinimize(frame, contentFrame, minBtn, fullSize, collapsedHeight)
-	local isMin = false
-	local collapsedSize = UDim2.new(0, fullSize.X.Offset, 0, collapsedHeight)
-	local function setMin(v)
-		isMin = v
-		if isMin then
-			contentFrame.Visible = false
-			frame.Size = collapsedSize
-			minBtn.Text = "▣"
-		else
-			frame.Size = fullSize
-			contentFrame.Visible = true
-			minBtn.Text = "—"
-		end
-	end
-	minBtn.MouseButton1Click:Connect(function() setMin(not isMin) end)
-	setMin(false)
-	return setMin
+--==================================================
+--=============  CAMERA SAFE MODE  =================
+--==================================================
+local camFreezeBusy = false
+local lastCamScriptableAt = 0
+local CAM_WATCHDOG_TIMEOUT = 2.0  -- si Scriptable > 2s => on répare
+
+local function markCameraPossiblyFrozen()
+	lastCamScriptableAt = tick()
 end
 
--- Responsive sizing & autoscale (UIScale + pixel size by %)
-local function ensureUIScale(screenGui)
-	local u = screenGui:FindFirstChild("AutoScale") or Instance.new("UIScale")
-	u.Name = "AutoScale"
-	u.Parent = screenGui
-	return u
-end
-
--- Attach responsive behavior to a frame:
-local function makeResponsive(frame, opts)
+local function resetCameraSafe(tag)
 	local cam = workspace.CurrentCamera
-	local function apply()
-		if not cam then cam = workspace.CurrentCamera end
-		local vp = (cam and cam.ViewportSize) or Vector2.new(1280, 720)
-		local w = math.clamp(math.floor(vp.X * (opts.w_pct or 0.44)), opts.minW or 260, opts.maxW or 620)
-		local h = math.clamp(math.floor(vp.Y * (opts.h_pct or 0.66)), opts.minH or 220, opts.maxH or 720)
-		frame.Size = UDim2.fromOffset(w, h)
-		local ox = (opts.offset and opts.offset.x) or 10
-		local oy = (opts.offset and opts.offset.y) or 10
-		local anchor = opts.anchor or "rightCenter"
-		if anchor == "leftTop" then
-			frame.Position = UDim2.fromOffset(ox, oy)
-		elseif anchor == "topCenter" then
-			frame.Position = UDim2.fromOffset(math.max(ox, math.floor((vp.X - w)/2)), oy)
-		else -- rightCenter
-			frame.Position = UDim2.fromOffset(math.max(ox, vp.X - w - ox), math.max(oy, math.floor((vp.Y - h)/2)))
-		end
-	end
-	apply()
-	if cam then cam:GetPropertyChangedSignal("ViewportSize"):Connect(apply) end
-	UserInputService:GetPropertyChangedSignal("TouchEnabled"):Connect(apply)
-	return apply
+	if not cam then return end
+	local hum = getHumanoid()
+	pcall(function()
+		-- Toujours revenir en mode joueur standard
+		cam.CameraType = Enum.CameraType.Custom
+		if hum then cam.CameraSubject = hum end
+	end)
 end
 
--- Scrolling helper for absolute-positioned content
-local function ensureScrolling(parentFrame, contentFrame)
-	local scroll = Instance.new("ScrollingFrame")
-	scroll.Name = "Scroll"
-	scroll.BackgroundTransparency = 1
-	scroll.BorderSizePixel = 0
-	scroll.ScrollBarThickness = 8
-	scroll.ScrollingDirection = Enum.ScrollingDirection.Y
-	scroll.ClipsDescendants = true
-	scroll.Parent = parentFrame
-	scroll.Position = UDim2.new(0, 8, 0, 46)
-	scroll.Size = UDim2.new(1, -16, 1, -56)
+-- Caméra gel/restore super sûre + garde-fou
+local function withFrozenCamera(fn)
+	local cam = workspace.CurrentCamera
+	if not cam then local _=pcall(fn); return end
+	if camFreezeBusy then local _=pcall(fn); return end
 
-	for _, child in ipairs(contentFrame:GetChildren()) do
-		if child:IsA("GuiObject") then
-			child.Parent = scroll
+	camFreezeBusy = true
+	local origType, origSubject, origCF = cam.CameraType, cam.CameraSubject, cam.CFrame
+	pcall(function()
+		cam.CameraType = Enum.CameraType.Scriptable
+		cam.CFrame = origCF
+	end)
+	markCameraPossiblyFrozen()
+
+	local ok = pcall(fn)
+
+	-- Restauration robuste
+	pcall(function()
+		-- Si l'ancien subject est mort/détruit, on remet le Humanoid du joueur
+		local subject = (origSubject and origSubject.Parent) and origSubject or getHumanoid()
+		cam.CameraSubject = subject
+	end)
+	pcall(function() cam.CFrame = origCF end)
+	pcall(function()
+		-- Si le type d'origine était Scriptable, on repasse quand même en Custom pour éviter les gels persistants
+		if origType == Enum.CameraType.Scriptable then
+			cam.CameraType = Enum.CameraType.Custom
+		else
+			cam.CameraType = origType
 		end
-	end
-	contentFrame:Destroy()
+	end)
 
-	local function updateCanvas()
-		local maxY = 0
-		for _, child in ipairs(scroll:GetChildren()) do
-			if child:IsA("GuiObject") then
-				local y = child.Position.Y.Offset + child.Size.Y.Offset
-				if y > maxY then maxY = y end
+	camFreezeBusy = false
+end
+
+-- Watchdog qui défige la caméra si elle reste bloquée en Scriptable (quelle qu’en soit la raison)
+task.spawn(function()
+	while true do
+		task.wait(0.5)
+		local cam = workspace.CurrentCamera
+		if cam and cam.CameraType == Enum.CameraType.Scriptable and not camFreezeBusy then
+			if (tick() - lastCamScriptableAt) > CAM_WATCHDOG_TIMEOUT then
+				resetCameraSafe("watchdog")
 			end
 		end
-		scroll.CanvasSize = UDim2.new(0, 0, 0, maxY + 8)
 	end
-	updateCanvas()
-
-	local cam = workspace.CurrentCamera
-	if cam then cam:GetPropertyChangedSignal("ViewportSize"):Connect(updateCanvas) end
-	scroll.ChildAdded:Connect(updateCanvas)
-	scroll.ChildRemoved:Connect(updateCanvas)
-
-	return scroll, updateCanvas
-end
+end)
 
 --==================================================
 --=============  PLAYER TUNER (LITE)  ==============
@@ -237,23 +216,6 @@ local function applySpeed(v)   currentSpeed=v;  local h=player.Character and pla
 local function applyGravity(v) currentGravity=v; workspace.Gravity=v end
 local function applyJump(v)    currentJump=v;   local h=player.Character and player.Character:FindFirstChildOfClass("Humanoid"); if h then h.JumpPower=v end end
 local function resetDefaults() applySpeed(DEFAULT_WALKSPEED); applyGravity(DEFAULT_GRAVITY); applyJump(DEFAULT_JUMPPOWER); msg("↩️ Reset (16/196.2/50).") end
-
--- Caméra gel/restore super sûre
-local camFreezeBusy = false
-local function withFrozenCamera(fn)
-	local cam = workspace.CurrentCamera
-	if not cam then local ok=pcall(fn); if not ok then end; return end
-	if camFreezeBusy then local ok=pcall(fn); if not ok then end; return end
-	camFreezeBusy = true
-	local origType, origSubject, origCF = cam.CameraType, cam.CameraSubject, cam.CFrame
-	pcall(function() cam.CameraType = Enum.CameraType.Scriptable; cam.CFrame = origCF end)
-	local ok = pcall(fn)
-	if not ok then end
-	pcall(function() cam.CameraSubject = origSubject end)
-	pcall(function() cam.CFrame       = origCF      end)
-	pcall(function() cam.CameraType    = origType    end)
-	camFreezeBusy = false
-end
 
 -- Anti-AFK simple (⚠️ ON par défaut)
 local ANTI_AFK_PERIOD, ANTI_AFK_DURATION = 60, 0.35
@@ -545,6 +507,8 @@ sellBtn.MouseButton1Click:Connect(function()
 	withFrozenCamera(function()
 		teleportTo(SELL_NPC_POS); task.wait(0.20); r:FireServer(); task.wait(0.05); hrp.CFrame = back
 	end)
+	-- sécurité en sortie
+	resetCameraSafe("sellBtn")
 end)
 chipBtn.MouseButton1Click:Connect(submitAllChipmunk)
 seedsBtn.MouseButton1Click:Connect(buyAllSeedsWorker)
@@ -579,7 +543,7 @@ local function ensureAcornGui()
 		normalSpawnInterval = 109, feverSpawnInterval = 30, acornDuration = 30,
 		feverGroundDistance = 6, groundIgnoreHeight = 20, feverYTolerance = 2,
 		instantTp = false, tpSpeed = 120, returnToStartAfterCollect = true,
-		freezeCameraOnTP = true,
+		freezeCameraOnTP = false,         -- ✅ Désactivé pour éviter les freezes
 		stopHarvestWhenBackpackFull = true,
 		autoHarvestRadius = 25,
 		autoHarvestTick = AUTO_HARVEST_TICK,
@@ -724,6 +688,8 @@ local function ensureAcornGui()
 					end)
 					task.wait(0.15)
 					if ac.config.returnToStartAfterCollect then hrp.CFrame = CFrame.new(originalPos) end
+					-- sécurité caméra post-TP
+					resetCameraSafe("acorn-post")
 				end
 				if ac.config.freezeCameraOnTP then withFrozenCamera(doCollect) else doCollect() end
 			end)
@@ -759,7 +725,8 @@ local function ensureAcornGui()
 	end
 
 	-- AUTO HARVEST (v2.4 light) + LIMIT 100
-	local function lowerx(s) if typeof(s)=="string" then return string.lower(s) end return "" end
+	local function lowerx(s) if typeof(s)=="string" then return string.lower(s) end return ""
+	end
 	local function containsAny(s, list) for _,kw in ipairs(list) do if s:find(kw) then return true end end return false end
 	local function isPlantPrompt(prompt)
 		if not prompt or not prompt.Parent then return false end
@@ -951,7 +918,7 @@ local function ensureAcornGui()
 	task.spawn(function()
 		while acornGui and acornGui.Parent do
 			if ac.scanAutoEnabled then
-				scanMapAcorn()
+				local _=scanMapAcorn()
 				for i=1, ac.scanPeriod do if not ac.scanAutoEnabled then break end task.wait(1) end
 			else
 				task.wait(0.4)
@@ -1021,6 +988,8 @@ player.CharacterAdded:Connect(function(char)
 	if hum then hum.WalkSpeed = currentSpeed; hum.JumpPower = currentJump end
 	workspace.Gravity = currentGravity
 	if isNoclipping then task.wait(0.2); if noclipConnection then noclipConnection:Disconnect(); noclipConnection=nil end; isNoclipping=false; end
+	-- ✅ À chaque respawn, on remet une caméra saine
+	resetCameraSafe("respawn")
 end)
 
 -- GC périodique
