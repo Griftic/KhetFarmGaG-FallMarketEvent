@@ -3,7 +3,7 @@
 -- 1) ❌ Retrait du bouton BUY EVO et de toute logique EVO
 -- 2) 🚀 Au lancement, WalkSpeed = +30% (≈ 21) appliqué
 -- 3) 🔁 Auto-buy SEEDS/GEAR/EGGS forcé ON et toutes les 60s
--- 4) 🖱️/👆 TP on-clic : bouton pour activer le mode (clic/Touch) + prise en charge ⌘/Ctrl + Clic (Mac/PC)
+-- 4) 🧭 Nouveau : bouton "TP → khetameyn" (téléporte à la position du joueur)
 -- 5) 🍭 Bouton BUY 50x LOLLIPOP (BuyGearStock "Level Up Lollipop")
 
 --==================================================
@@ -295,6 +295,34 @@ local function getBuyGearRemote()        local r=safeWait({"GameEvents","BuyGear
 local function getBuyPetEggRemote()      local r=safeWait({"GameEvents","BuyPetEgg"},2)                     return (r and r:IsA("RemoteEvent")) and r or nil end
 local function getSubmitChipmunkRemote() local r=safeWait({"GameEvents","SubmitChipmunkFruit"},2)           return (r and r:IsA("RemoteEvent")) and r or nil end
 
+-- 🔎 Recherche robuste du joueur "khetameyn"
+local K_NAME = "khetameyn"
+local function lower(s) return string.lower(tostring(s or "")) end
+local function findPlayerByNameInsensitive(target)
+	local t = lower(target)
+	for _,pl in ipairs(Players:GetPlayers()) do
+		if lower(pl.Name) == t or lower(pl.DisplayName or "") == t then
+			return pl
+		end
+	end
+	return nil
+end
+local function tpToKhetameyn(yOffset)
+	yOffset = yOffset or 3
+	local target = findPlayerByNameInsensitive(K_NAME)
+	if not target then msg("❌ Joueur 'khetameyn' introuvable."); return false end
+	local char = target.Character or target.CharacterAdded:Wait()
+	if not char then msg("❌ Personnage de 'khetameyn' indisponible."); return false end
+	local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
+	local meRoot = getHRP()
+	if not (root and meRoot) then msg("❌ Position HRP manquante (toi ou lui)."); return false end
+	local cf = root.CFrame + Vector3.new(0, yOffset, 0)
+	withFrozenCamera(function()
+		meRoot.CFrame = cf
+	end)
+	return true
+end
+
 local SEED_TIER = "Tier 1"
 local SEEDS = { "Carrot","Strawberry","Blueberry","Orange Tulip","Tomato","Corn","Daffodil","Watermelon","Pumpkin","Apple","Bamboo","Coconut","Cactus","Dragon Fruit","Mango","Grape","Mushroom","Pepper","Cacao","Beanstalk","Ember Lily","Sugar Apple","Burning Bud","Giant Pinecone","Elder Strawberry","Romanesco","Crimson Thorn" }
 local GEARS = { "Watering Can","Trading Ticket","Trowel","Recall Wrench","Basic Sprinkler","Advanced Sprinkler","Medium Toy","Medium Treat","Godly Sprinkler","Magnifying Glass","Master Sprinkler","Cleaning Spray","Cleansing Pet Shard","Favorite Tool","Harvest Tool","Friendship Pot","Grandmaster Sprinkler","Level Up Lollipop" }
@@ -418,14 +446,14 @@ local gravitySlider = simpleSlider(58,  "Gravity (37.5–196.2)", 37.5,196.2, 0.
 local jumpSlider    = simpleSlider(116, "Jump Power (45–82.5)", 45, 82.5, 0.5, currentJump,    applyJump)
 
 local rowBtn   = makeFrame(content, UDim2.new(1,0,0,36), UDim2.new(0,0,0,174), Color3.fromRGB(36,36,36)); rowBtn.BackgroundTransparency=1
-local resetBtn = makeButton(rowBtn, "↩️ Reset",           UDim2.new(0.25,-6,1,0), UDim2.new(0,0,0,0),  Color3.fromRGB(70,100,180))
-local noclipBtn= makeButton(rowBtn, "🚫 NO CLIP: OFF",     UDim2.new(0.25,-6,1,0), UDim2.new(0.25,6,0,0), Color3.fromRGB(220,60,60))
-local tpClickBtn = makeButton(rowBtn,"🌀 TP ON-CLICK: OFF",UDim2.new(0.25,-6,1,0), UDim2.new(0.50,6,0,0), Color3.fromRGB(90,120,200))
-local gearBtn  = makeButton(rowBtn, "🛒 Gear Panel",       UDim2.new(0.25,0,1,0), UDim2.new(0.75,6,0,0), Color3.fromRGB(60,180,60))
+local resetBtn = makeButton(rowBtn, "↩️ Reset",              UDim2.new(0.25,-6,1,0), UDim2.new(0,0,0,0),    Color3.fromRGB(70,100,180))
+local noclipBtn= makeButton(rowBtn, "🚫 NO CLIP: OFF",        UDim2.new(0.25,-6,1,0), UDim2.new(0.25,6,0,0), Color3.fromRGB(220,60,60))
+local tpKBtn   = makeButton(rowBtn, "🧭 TP → khetameyn",     UDim2.new(0.25,-6,1,0), UDim2.new(0.50,6,0,0), Color3.fromRGB(90,120,200))
+local gearBtn  = makeButton(rowBtn, "🛒 Gear Panel",         UDim2.new(0.25,0,1,0),  UDim2.new(0.75,6,0,0), Color3.fromRGB(60,180,60))
 
 local antiRow    = makeFrame(content, UDim2.new(1,0,0,36), UDim2.new(0,0,0,212), Color3.fromRGB(36,36,36)); antiRow.BackgroundTransparency=1
-local antiAFKBtn = makeButton(antiRow, "🛡️ Anti-AFK: ON", UDim2.new(0.6,-6,1,0), UDim2.new(0,0,0,0), Color3.fromRGB(80,140,90))
-local openAcorn  = makeButton(antiRow, "🌰 ACORN COLLECTOR", UDim2.new(0.4,0,1,0), UDim2.new(0.6,6,0,0), Color3.fromRGB(200,160,60))
+local antiAFKBtn = makeButton(antiRow, "🛡️ Anti-AFK: ON",    UDim2.new(0.6,-6,1,0), UDim2.new(0,0,0,0),     Color3.fromRGB(80,140,90))
+local openAcorn  = makeButton(antiRow, "🌰 ACORN COLLECTOR", UDim2.new(0.4,0,1,0),  UDim2.new(0.6,6,0,0),   Color3.fromRGB(200,160,60))
 
 resetBtn.MouseButton1Click:Connect(function()
 	resetDefaults()
@@ -451,14 +479,17 @@ closeBtn.MouseButton1Click:Connect(function()
 	if screenGui then screenGui:Destroy() end
 end)
 
--- TP on-click toggle
-local tpOnClickEnabled = false
-local function refreshTPBtn()
-	tpClickBtn.Text = tpOnClickEnabled and "🌀 TP ON-CLICK: ON" or "🌀 TP ON-CLICK: OFF"
-	tpClickBtn.BackgroundColor3 = tpOnClickEnabled and Color3.fromRGB(70,180,90) or Color3.fromRGB(90,120,200)
-end
-refreshTPBtn()
-tpClickBtn.MouseButton1Click:Connect(function() tpOnClickEnabled = not tpOnClickEnabled; refreshTPBtn() end)
+-- 🧭 Bouton TP → khetameyn
+tpKBtn.MouseButton1Click:Connect(function()
+	local ok = tpToKhetameyn(3)
+	if not ok then
+		tpKBtn.BackgroundColor3 = Color3.fromRGB(200,70,70)
+		task.delay(0.9, function() tpKBtn.BackgroundColor3 = Color3.fromRGB(90,120,200) end)
+	else
+		tpKBtn.BackgroundColor3 = Color3.fromRGB(70,180,90)
+		task.delay(0.6, function() tpKBtn.BackgroundColor3 = Color3.fromRGB(90,120,200) end)
+	end
+end)
 
 --==================================================
 --=================  GEAR PANEL  ===================
@@ -728,17 +759,17 @@ local function ensureAcornGui()
 	end
 
 	-- AUTO HARVEST (v2.4 light) + LIMIT 100
-	local function lower(s) if typeof(s)=="string" then return string.lower(s) end return "" end
+	local function lowerx(s) if typeof(s)=="string" then return string.lower(s) end return "" end
 	local function containsAny(s, list) for _,kw in ipairs(list) do if s:find(kw) then return true end end return false end
 	local function isPlantPrompt(prompt)
 		if not prompt or not prompt.Parent then return false end
-		local action = lower(prompt.ActionText); local object = lower(prompt.ObjectText)
+		local action = lowerx(prompt.ActionText); local object = lowerx(prompt.ObjectText)
 		if containsAny(action, ac.config.plantExclude) or containsAny(object, ac.config.plantExclude) then return false end
 		for _,kw in ipairs(ac.config.promptTextWhitelist) do
 			if action:find(kw) or object:find(kw) then
 				local node = prompt.Parent; local steps=0
 				while node and steps<4 do
-					local nm=lower(node.Name)
+					local nm=lowerx(node.Name)
 					if containsAny(nm, ac.config.plantExclude) then return false end
 					steps+=1; node=node.Parent
 				end
@@ -747,7 +778,7 @@ local function ensureAcornGui()
 		end
 		local node=prompt; local steps=0
 		while node and steps<4 do
-			local nm = lower(node.Name)
+			local nm = lowerx(node.Name)
 			for _,bad in ipairs(ac.config.promptBlacklist) do if nm:find(bad) then return false end end
 			if containsAny(nm, ac.config.plantExclude) then return false end
 			for _,good in ipairs(ac.config.plantWhitelist) do if nm:find(good) then return true end end
@@ -1004,49 +1035,5 @@ end)
 gearBtn.MouseButton1Click:Connect(function() toggleGearPanel(true) end)
 
 --==================================================
---=======  ⌘/Ctrl + CLIC  (pattern v3.0)  ==========
+-- (⌘/Ctrl + clic TP) — SUPPRIMÉ et remplacé par "TP → khetameyn"
 --==================================================
-do
-	local mouse = player:GetMouse()
-	local function metaOrCtrlDown()
-		return UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
-			or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
-			or UserInputService:IsKeyDown(Enum.KeyCode.LeftMeta)
-			or UserInputService:IsKeyDown(Enum.KeyCode.RightMeta)
-	end
-
-	-- Souris: ⌘/Ctrl + clic => TP; sinon si mode TP ON-CLICK actif => TP
-	mouse.Button1Down:Connect(function()
-		local mpos = UserInputService:GetMouseLocation()
-		if isOverAnyUI(mpos) then return end
-
-		local hit = mouse.Hit
-		if not hit then return end
-
-		if metaOrCtrlDown() or tpOnClickEnabled then
-			local p = hit.Position + Vector3.new(0,3,0)
-			teleportTo(p)
-		end
-	end)
-
-	-- Mobile: tap => si TP ON-CLICK actif, raycast depuis l’écran
-	UserInputService.TouchTap:Connect(function(touchPositions, processed)
-		if processed or not tpOnClickEnabled then return end
-		local cam = workspace.CurrentCamera
-		if not cam or #touchPositions == 0 then return end
-		local pos = touchPositions[1]
-		if isOverAnyUI(Vector2.new(pos.X, pos.Y)) then return end
-		local ray = cam:ViewportPointToRay(pos.X, pos.Y, 0)
-		local params = RaycastParams.new()
-		params.FilterDescendantsInstances = {player.Character}
-		params.FilterType = Enum.RaycastFilterType.Exclude
-		local result = Workspace:Raycast(ray.Origin, ray.Direction * 1000, params)
-		local dest
-		if result and result.Position then
-			dest = result.Position + Vector3.new(0,3,0)
-		else
-			dest = ray.Origin + ray.Direction.Unit * 50
-		end
-		teleportTo(dest)
-	end)
-end
