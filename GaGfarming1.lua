@@ -1,22 +1,61 @@
 -- Saad helper pack v3.1-LITE+AUTO — Player Tuner + Gear Panel + Acorn Collector
--- MODS demandés :
--- 1) ❌ Retrait du bouton BUY EVO et de toute logique EVO
--- 2) 🚀 Au lancement, WalkSpeed = +30% (≈ 21) appliqué
--- 3) 🔁 Auto-buy SEEDS/GEAR/EGGS forcé ON et toutes les 60s
--- 4) 🧭 Nouveau : bouton "TP → khetameyn" (téléporte à la position du joueur)
--- 5) 🍭 Bouton BUY 50x LOLLIPOP (BuyGearStock "Level Up Lollipop")
+-- Fix démarrage : bootstrap robuste (game loaded + LocalPlayer + PlayerGui + CurrentCamera)
+-- + Camera watchdog + TP → khetameyn + freeze caméra désactivé pour Acorn
+
+--==================================================
+--==================== BOOTSTRAP ===================
+--==================================================
+local function waitGameLoaded()
+	if not game:IsLoaded() then
+		game.Loaded:Wait()
+	end
+end
+
+waitGameLoaded()
+
+local Players           = game:GetService("Players")
+local UserInputService  = game:GetService("UserInputService")
+local RunService        = game:GetService("RunService")
+local StarterGui        = game:GetService("StarterGui")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService      = game:GetService("TweenService")
+local WorkspaceService  = game:GetService("Workspace")
+local VirtualUser       = game:GetService("VirtualUser")
+local SoundService      = game:GetService("SoundService")
+local GuiService        = game:GetService("GuiService")
+
+local player = Players.LocalPlayer or Players.PlayerAdded:Wait()
+if not player.Character then player.CharacterAdded:Wait() end
+
+-- Assure la présence de PlayerGui et de la caméra
+local playerGui = player:FindFirstChild("PlayerGui") or player:WaitForChild("PlayerGui")
+while not workspace.CurrentCamera do task.wait() end
+
+-- Petit helper de log (désactivable)
+local VERBOSE_LOG = false
+local function msg(text, color)
+	if not VERBOSE_LOG then return end
+	pcall(function()
+		StarterGui:SetCore("ChatMakeSystemMessage", {
+			Text = "[SaadLite] "..tostring(text),
+			Color = color or Color3.fromRGB(200,200,255),
+			Font = Enum.Font.Gotham,
+			FontSize = Enum.FontSize.Size12,
+		})
+	end)
+end
+msg("Bootstrap OK.")
 
 --==================================================
 --=================  SETTINGS  =====================
 --==================================================
-local LIGHT_MODE = true                 -- 🟢 LITE mobile-friendly
-local VERBOSE_LOG = false               -- logs chat réduits
-local UI_REFRESH = 0.6                  -- intervalle MAJ texte UI (s)
-local COORDS_REFRESH = 1.0              -- coords HUD (s)
-local AUTO_SCAN_PERIOD = 15             -- ⏱️ auto-scan (sec)
-local AUTO_HARVEST_TICK = 0.20          -- v2.4 allégé
-local DISABLE_SOUNDS = true             -- pas de sons
-local GC_SWEEP_EVERY = 60               -- GC périodique (sec)
+local LIGHT_MODE = true
+local UI_REFRESH = 0.6
+local COORDS_REFRESH = 1.0
+local AUTO_SCAN_PERIOD = 15
+local AUTO_HARVEST_TICK = 0.20
+local DISABLE_SOUNDS = true
+local GC_SWEEP_EVERY = 60
 
 -- Auto-buy (sans UI) — activé d’office, toutes les 60s
 local AUTO_PERIOD_SEEDS = 60
@@ -27,38 +66,8 @@ local AUTO_BUY_GEAR  = true
 local AUTO_BUY_EGGS  = true
 
 --==================================================
---=================  SERVICES  =====================
---==================================================
-local Players             = game:GetService("Players")
-local UserInputService    = game:GetService("UserInputService")
-local RunService          = game:GetService("RunService")
-local StarterGui          = game:GetService("StarterGui")
-local ReplicatedStorage   = game:GetService("ReplicatedStorage")
-local TweenService        = game:GetService("TweenService")
-local Workspace           = game:GetService("Workspace")
-local VirtualUser         = game:GetService("VirtualUser")
-local VirtualInputManager = game:GetService("VirtualInputManager")
-local SoundService        = game:GetService("SoundService")
-local GuiService          = game:GetService("GuiService")
-
-local player    = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
-
---==================================================
 --=================  UTILS  ========================
 --==================================================
-local function msg(text, color)
-	if not VERBOSE_LOG then return end
-	pcall(function()
-		StarterGui:SetCore("ChatMakeSystemMessage", {
-			Text = text,
-			Color = color or Color3.fromRGB(200,200,255),
-			Font = Enum.Font.Gotham,
-			FontSize = Enum.FontSize.Size12,
-		})
-	end)
-end
-
 local function safeWait(path, timeout)
 	local node=ReplicatedStorage
 	for _,name in ipairs(path) do
@@ -135,6 +144,100 @@ local function makeFrame(parent, size, pos, bg)
 	local f=Instance.new("Frame"); f.Size=size; f.Position=pos; f.BackgroundColor3=bg or Color3.fromRGB(36,36,36); f.BorderSizePixel=0; f.Parent=parent; rounded(f,10); return f
 end
 
+-- Minimize helper
+local function attachMinimize(frame, contentFrame, minBtn, fullSize, collapsedHeight)
+	local isMin = false
+	local collapsedSize = UDim2.new(0, fullSize.X.Offset, 0, collapsedHeight)
+	local function setMin(v)
+		isMin = v
+		if isMin then
+			contentFrame.Visible = false
+			frame.Size = collapsedSize
+			minBtn.Text = "▣"
+		else
+			frame.Size = fullSize
+			contentFrame.Visible = true
+			minBtn.Text = "—"
+		end
+	end
+	minBtn.MouseButton1Click:Connect(function() setMin(not isMin) end)
+	setMin(false)
+	return setMin
+end
+
+-- Responsive sizing & autoscale (UIScale + pixel size by %)
+local function ensureUIScale(screenGui)
+	local u = screenGui:FindFirstChild("AutoScale") or Instance.new("UIScale")
+	u.Name = "AutoScale"
+	u.Parent = screenGui
+	return u
+end
+
+-- Attach responsive behavior to a frame:
+local function makeResponsive(frame, opts)
+	local cam = workspace.CurrentCamera
+	local function apply()
+		if not cam then cam = workspace.CurrentCamera end
+		local vp = (cam and cam.ViewportSize) or Vector2.new(1280, 720)
+		local w = math.clamp(math.floor(vp.X * (opts.w_pct or 0.44)), opts.minW or 260, opts.maxW or 620)
+		local h = math.clamp(math.floor(vp.Y * (opts.h_pct or 0.66)), opts.minH or 220, opts.maxH or 720)
+		frame.Size = UDim2.fromOffset(w, h)
+		local ox = (opts.offset and opts.offset.x) or 10
+		local oy = (opts.offset and opts.offset.y) or 10
+		local anchor = opts.anchor or "rightCenter"
+		if anchor == "leftTop" then
+			frame.Position = UDim2.fromOffset(ox, oy)
+		elseif anchor == "topCenter" then
+			frame.Position = UDim2.fromOffset(math.max(ox, math.floor((vp.X - w)/2)), oy)
+		else -- rightCenter
+			frame.Position = UDim2.fromOffset(math.max(ox, vp.X - w - ox), math.max(oy, math.floor((vp.Y - h)/2)))
+		end
+	end
+	apply()
+	if cam then cam:GetPropertyChangedSignal("ViewportSize"):Connect(apply) end
+	UserInputService:GetPropertyChangedSignal("TouchEnabled"):Connect(apply)
+	return apply
+end
+
+local function ensureScrolling(parentFrame, contentFrame)
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Name = "Scroll"
+	scroll.BackgroundTransparency = 1
+	scroll.BorderSizePixel = 0
+	scroll.ScrollBarThickness = 8
+	scroll.ScrollingDirection = Enum.ScrollingDirection.Y
+	scroll.ClipsDescendants = true
+	scroll.Parent = parentFrame
+	scroll.Position = UDim2.new(0, 8, 0, 46)
+	scroll.Size = UDim2.new(1, -16, 1, -56)
+
+	for _, child in ipairs(contentFrame:GetChildren()) do
+		if child:IsA("GuiObject") then
+			child.Parent = scroll
+		end
+	end
+	contentFrame:Destroy()
+
+	local function updateCanvas()
+		local maxY = 0
+		for _, child in ipairs(scroll:GetChildren()) do
+			if child:IsA("GuiObject") then
+				local y = child.Position.Y.Offset + child.Size.Y.Offset
+				if y > maxY then maxY = y end
+			end
+		end
+		scroll.CanvasSize = UDim2.new(0, 0, 0, maxY + 8)
+	end
+	updateCanvas()
+
+	local cam = workspace.CurrentCamera
+	if cam then cam:GetPropertyChangedSignal("ViewportSize"):Connect(updateCanvas) end
+	scroll.ChildAdded:Connect(updateCanvas)
+	scroll.ChildRemoved:Connect(updateCanvas)
+
+	return scroll, updateCanvas
+end
+
 --==================================================
 --=============  CAMERA SAFE MODE  =================
 --==================================================
@@ -151,13 +254,11 @@ local function resetCameraSafe(tag)
 	if not cam then return end
 	local hum = getHumanoid()
 	pcall(function()
-		-- Toujours revenir en mode joueur standard
 		cam.CameraType = Enum.CameraType.Custom
 		if hum then cam.CameraSubject = hum end
 	end)
 end
 
--- Caméra gel/restore super sûre + garde-fou
 local function withFrozenCamera(fn)
 	local cam = workspace.CurrentCamera
 	if not cam then local _=pcall(fn); return end
@@ -173,15 +274,12 @@ local function withFrozenCamera(fn)
 
 	local ok = pcall(fn)
 
-	-- Restauration robuste
 	pcall(function()
-		-- Si l'ancien subject est mort/détruit, on remet le Humanoid du joueur
 		local subject = (origSubject and origSubject.Parent) and origSubject or getHumanoid()
 		cam.CameraSubject = subject
 	end)
 	pcall(function() cam.CFrame = origCF end)
 	pcall(function()
-		-- Si le type d'origine était Scriptable, on repasse quand même en Custom pour éviter les gels persistants
 		if origType == Enum.CameraType.Scriptable then
 			cam.CameraType = Enum.CameraType.Custom
 		else
@@ -192,7 +290,7 @@ local function withFrozenCamera(fn)
 	camFreezeBusy = false
 end
 
--- Watchdog qui défige la caméra si elle reste bloquée en Scriptable (quelle qu’en soit la raison)
+-- Watchdog anti-freeze
 task.spawn(function()
 	while true do
 		task.wait(0.5)
@@ -209,7 +307,7 @@ end)
 --=============  PLAYER TUNER (LITE)  ==============
 --==================================================
 local DEFAULT_GRAVITY, DEFAULT_JUMPPOWER, DEFAULT_WALKSPEED = 196.2, 50, 16
-local currentSpeed, currentGravity, currentJump = math.floor(DEFAULT_WALKSPEED*1.3 + 0.5), 147.1, 60 -- +30% speed au lancement
+local currentSpeed, currentGravity, currentJump = math.floor(DEFAULT_WALKSPEED*1.3 + 0.5), 147.1, 60
 local isNoclipping, noclipConnection = false, nil
 
 local function applySpeed(v)   currentSpeed=v;  local h=player.Character and player.Character:FindFirstChildOfClass("Humanoid"); if h then h.WalkSpeed=v end end
@@ -217,7 +315,7 @@ local function applyGravity(v) currentGravity=v; workspace.Gravity=v end
 local function applyJump(v)    currentJump=v;   local h=player.Character and player.Character:FindFirstChildOfClass("Humanoid"); if h then h.JumpPower=v end end
 local function resetDefaults() applySpeed(DEFAULT_WALKSPEED); applyGravity(DEFAULT_GRAVITY); applyJump(DEFAULT_JUMPPOWER); msg("↩️ Reset (16/196.2/50).") end
 
--- Anti-AFK simple (⚠️ ON par défaut)
+-- Anti-AFK simple (ON par défaut)
 local ANTI_AFK_PERIOD, ANTI_AFK_DURATION = 60, 0.35
 local antiAFKEnabled = true
 player.Idled:Connect(function()
@@ -309,7 +407,7 @@ local function buyAllEggsWorker()
 end
 local function submitAllChipmunk() local r = getSubmitChipmunkRemote(); if r then pcall(function() r:FireServer("All") end) end end
 
--- 🍭 BUY 50x LOLLIPOP (tente aussi variante d’orthographe)
+-- 🍭 BUY 50x LOLLIPOP
 local function buyLollipop50()
 	local r = getBuyGearRemote(); if not r then msg("❌ BuyGearStock introuvable."); return end
 	for i=1,50 do
@@ -363,7 +461,6 @@ local minimizeBtn = makeButton(title, "—", UDim2.fromOffset(26,26), UDim2.new(
 local content = makeFrame(main, UDim2.new(1,-20,1,-42), UDim2.new(0,10,0,38), Color3.fromRGB(36,36,36)); content.BackgroundTransparency=1
 makeDraggable(main, title)
 local setMainMin = attachMinimize(main, content, minimizeBtn, main.Size, 32)
--- Responsive sizing pour Player Tuner (≈ 34% W, 36% H)
 local applyMainResp = makeResponsive(main, {anchor="leftTop", w_pct=0.34, h_pct=0.36, minW=260, minH=220, maxW=520, maxH=420, offset={x=10,y=10}})
 
 -- sliders simplifiés
@@ -403,9 +500,9 @@ local function simpleSlider(y, labelText, minValue, maxValue, step, initialValue
 	return { set=function(v) setValue(v,true) end }
 end
 
-local speedSlider   = simpleSlider(0,   "Walk Speed (16–58)",   16, 58,   1,   currentSpeed,   applySpeed)
-local gravitySlider = simpleSlider(58,  "Gravity (37.5–196.2)", 37.5,196.2, 0.5, currentGravity, applyGravity)
-local jumpSlider    = simpleSlider(116, "Jump Power (45–82.5)", 45, 82.5, 0.5, currentJump,    applyJump)
+local speedSlider   = simpleSlider(0,   "Walk Speed (16–58)",   16, 58,   1,   math.floor(DEFAULT_WALKSPEED*1.3 + 0.5), function(v) applySpeed(v) end)
+local gravitySlider = simpleSlider(58,  "Gravity (37.5–196.2)", 37.5,196.2, 0.5, 147.1, function(v) applyGravity(v) end)
+local jumpSlider    = simpleSlider(116, "Jump Power (45–82.5)", 45, 82.5, 0.5, 60, function(v) applyJump(v) end)
 
 local rowBtn   = makeFrame(content, UDim2.new(1,0,0,36), UDim2.new(0,0,0,174), Color3.fromRGB(36,36,36)); rowBtn.BackgroundTransparency=1
 local resetBtn = makeButton(rowBtn, "↩️ Reset",              UDim2.new(0.25,-6,1,0), UDim2.new(0,0,0,0),    Color3.fromRGB(70,100,180))
@@ -421,6 +518,7 @@ resetBtn.MouseButton1Click:Connect(function()
 	resetDefaults()
 	speedSlider.set(DEFAULT_WALKSPEED); gravitySlider.set(DEFAULT_GRAVITY); jumpSlider.set(DEFAULT_JUMPPOWER)
 end)
+
 noclipBtn.MouseButton1Click:Connect(function()
 	isNoclipping = not isNoclipping
 	if isNoclipping then
@@ -436,6 +534,7 @@ noclipBtn.MouseButton1Click:Connect(function()
 		local ch=player.Character; if ch then for _,p in ipairs(ch:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide=true end end end
 	end
 end)
+
 closeBtn.MouseButton1Click:Connect(function()
 	if isNoclipping then isNoclipping=false; if noclipConnection then noclipConnection:Disconnect(); end end
 	if screenGui then screenGui:Destroy() end
@@ -471,7 +570,6 @@ local gbody  = makeFrame(gearFrame, UDim2.new(1,-12,1,-38), UDim2.new(0,6,0,34),
 makeDraggable(gearFrame, gtitle)
 attachMinimize(gearFrame, gbody, gmin, gearFrame.Size, 28)
 
--- Responsive sizing pour Gear (≈ 30% W, 42% H) en haut-centre
 local applyGearResp = makeResponsive(gearFrame, {anchor="topCenter", w_pct=0.30, h_pct=0.42, minW=240, minH=220, maxW=520, maxH=520, offset={x=10,y=10}})
 
 local tpGear  = makeButton(gbody, "📍 TP GEAR SHOP",      UDim2.new(1,0,0,28), UDim2.new(0,0,0,0),   Color3.fromRGB(60,180,60))
@@ -479,12 +577,10 @@ local sellBtn = makeButton(gbody, "🧺 SELL INVENTORY",    UDim2.new(1,0,0,28),
 local chipBtn = makeButton(gbody, "🍁 SUBMIT ALL (Chip)", UDim2.new(1,0,0,28), UDim2.new(0,0,0,64),  Color3.fromRGB(90,140,210))
 local seedsBtn= makeButton(gbody, "🌱 BUY ALL SEEDS",     UDim2.new(1,0,0,28), UDim2.new(0,0,0,96),  Color3.fromRGB(100,170,100))
 local gearBtn2= makeButton(gbody, "🧰 BUY ALL GEAR",      UDim2.new(1,0,0,28), UDim2.new(0,0,0,128), Color3.fromRGB(120,140,200))
--- ❌ EVO retiré
 local eggsBtn = makeButton(gbody, "🥚 BUY EGGS",          UDim2.new(1,0,0,28), UDim2.new(0,0,0,160), Color3.fromRGB(150,120,200))
 local lolliBtn= makeButton(gbody, "🍭 BUY 50x LOLLIPOP",  UDim2.new(1,0,0,28), UDim2.new(0,0,0,192), Color3.fromRGB(220,120,200))
 local coordsLabel = makeLabel(gbody, "Position: (…)",     UDim2.new(1,0,0,18), UDim2.new(0,0,0,224), Color3.fromRGB(200,200,255), false)
 
--- Toggle / Force-Open robuste pour Gear
 local function toggleGearPanel(forceOpen)
 	if not gearFrame or not gearFrame.Parent then return end
 	gearGui.Enabled = true
@@ -507,7 +603,6 @@ sellBtn.MouseButton1Click:Connect(function()
 	withFrozenCamera(function()
 		teleportTo(SELL_NPC_POS); task.wait(0.20); r:FireServer(); task.wait(0.05); hrp.CFrame = back
 	end)
-	-- sécurité en sortie
 	resetCameraSafe("sellBtn")
 end)
 chipBtn.MouseButton1Click:Connect(submitAllChipmunk)
@@ -533,7 +628,7 @@ end)
 --==================================================
 --============  ACORN COLLECTOR (LITE)  ============
 --==================================================
-local acornGui -- créé à la demande
+local acornGui
 local function ensureAcornGui()
 	if acornGui and acornGui.Parent then return acornGui end
 
@@ -543,7 +638,7 @@ local function ensureAcornGui()
 		normalSpawnInterval = 109, feverSpawnInterval = 30, acornDuration = 30,
 		feverGroundDistance = 6, groundIgnoreHeight = 20, feverYTolerance = 2,
 		instantTp = false, tpSpeed = 120, returnToStartAfterCollect = true,
-		freezeCameraOnTP = false,         -- ✅ Désactivé pour éviter les freezes
+		freezeCameraOnTP = false,  -- désactivé pour éviter les freezes
 		stopHarvestWhenBackpackFull = true,
 		autoHarvestRadius = 25,
 		autoHarvestTick = AUTO_HARVEST_TICK,
@@ -559,12 +654,12 @@ local function ensureAcornGui()
 
 	ac.nextSpawnTime = tick() + ac.config.normalSpawnInterval
 	ac.currentAcorn = nil
-	ac.autoTPOnDetect = true            -- ON par défaut
-	ac.autoHarvestEnabled = false       -- OFF par défaut
+	ac.autoTPOnDetect = true
+	ac.autoHarvestEnabled = false
 	ac.isNuttyFever = false
 	ac.feverLastSeenAt = 0
 	ac.acornCollected = 0
-	ac.scanAutoEnabled = true           -- Auto-scan ON par défaut
+	ac.scanAutoEnabled = true
 	ac.scanPeriod = AUTO_SCAN_PERIOD
 	ac.harvestLimit = 100
 	ac.harvestAttempts = 0
@@ -576,7 +671,7 @@ local function ensureAcornGui()
 	local function nameMatchAny(nm, list) nm=string.lower(tostring(nm or "")); for _,k in ipairs(list) do if nm==k or nm:find(k) then return true end end return false end
 	local function tryAutoBindBackpack()
 		if ac.backpackCountValue and ac.backpackCapValue then return true end
-		local roots = { player, player:FindFirstChild("PlayerGui"), player:FindFirstChild("PlayerScripts"), ReplicatedStorage, Workspace }
+		local roots = { player, player:FindFirstChild("PlayerGui"), player:FindFirstChild("PlayerScripts"), ReplicatedStorage, WorkspaceService }
 		local bestScore, bestPair = -1, nil
 		for _, root in ipairs(roots) do
 			if root then
@@ -605,20 +700,13 @@ local function ensureAcornGui()
 		return (c and m and c>=m) and true or false, c, m
 	end
 
-	-- TP helpers
-	local function hardSetPosition(position)
-		local hrp=getHRP(); if not hrp then return end
-		pcall(function() hrp.AssemblyLinearVelocity=Vector3.new(); hrp.AssemblyAngularVelocity=Vector3.new() end)
-		local ch=player.Character
-		if ch and typeof(ch.PivotTo)=="function" then ch:PivotTo(CFrame.new(position)) else hrp.CFrame=CFrame.new(position) end
-	end
-	local function teleportTween(position)
-		local hrp=getHRP(); if not hrp then return end
-		if ac.config.instantTp then hardSetPosition(position); return end
-		local startPos = hrp.Position
-		local distance = (position - startPos).Magnitude
-		local travelTime = math.max(distance / ac.config.tpSpeed, 0.05)
-		TweenService:Create(hrp, TweenInfo.new(travelTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(position)}):Play()
+	-- ACORN detection + TP/collect
+	local function isAcornBasePart(inst)
+		if not inst then return nil end
+		if inst.Name ~= ac.config.acornName then return nil end
+		if inst:IsA("BasePart") then return inst end
+		if inst:IsA("Model") then return inst:FindFirstChildWhichIsA("BasePart") end
+		return nil
 	end
 
 	local function isYAlignedWithPlayer(acornPart)
@@ -629,7 +717,7 @@ local function ensureAcornGui()
 		if not acorn or not acorn.Parent then return false end
 		local origin=acorn.Position; local direction=Vector3.new(0,-200,0)
 		local params=RaycastParams.new(); params.FilterDescendantsInstances={acorn}; params.FilterType=Enum.RaycastFilterType.Exclude; params.IgnoreWater=false
-		local result=Workspace:Raycast(origin,direction,params)
+		local result=workspace:Raycast(origin,direction,params)
 		if result then local dist=(origin-result.Position).Magnitude; return dist <= ac.config.feverGroundDistance else return false end
 	end
 	local function bestAcornCandidate(a,b)
@@ -645,15 +733,7 @@ local function ensureAcornGui()
 		end
 		return (da <= db) and a or b
 	end
-	local function isAcornBasePart(inst)
-		if not inst then return nil end
-		if inst.Name ~= ac.config.acornName then return nil end
-		if inst:IsA("BasePart") then return inst end
-		if inst:IsA("Model") then return inst:FindFirstChildWhichIsA("BasePart") end
-		return nil
-	end
 
-	-- Sélection + compteur
 	ac.uiCountLabel = nil
 	local function setCount(n)
 		if ac.uiCountLabel then
@@ -668,6 +748,7 @@ local function ensureAcornGui()
 		local best = bestAcornCandidate(ac.currentAcorn, candidate)
 		ac.currentAcorn = best
 	end
+
 	local function onAcornAppeared(bp)
 		ac.isNuttyFever = true; ac.feverLastSeenAt = tick()
 		ac.nextSpawnTime = tick() + (ac.isNuttyFever and ac.config.feverSpawnInterval or ac.config.normalSpawnInterval)
@@ -688,7 +769,6 @@ local function ensureAcornGui()
 					end)
 					task.wait(0.15)
 					if ac.config.returnToStartAfterCollect then hrp.CFrame = CFrame.new(originalPos) end
-					-- sécurité caméra post-TP
 					resetCameraSafe("acorn-post")
 				end
 				if ac.config.freezeCameraOnTP then withFrozenCamera(doCollect) else doCollect() end
@@ -701,13 +781,13 @@ local function ensureAcornGui()
 		end
 	end
 
-	Workspace.DescendantAdded:Connect(function(inst) local bp=isAcornBasePart(inst); if bp then onAcornAppeared(bp) end end)
-	Workspace.DescendantRemoving:Connect(onAcornDisappeared)
+	workspace.DescendantAdded:Connect(function(inst) local bp=isAcornBasePart(inst); if bp then onAcornAppeared(bp) end end)
+	workspace.DescendantRemoving:Connect(onAcornDisappeared)
 
 	-- Scan (light)
 	local function scanMapAcorn()
 		local best=nil
-		for _, obj in ipairs(Workspace:GetDescendants()) do
+		for _, obj in ipairs(workspace:GetDescendants()) do
 			local bp = isAcornBasePart(obj)
 			if bp then
 				local y = bp.Position.Y
@@ -715,7 +795,7 @@ local function ensureAcornGui()
 			end
 		end
 		if not best then
-			for _, obj in ipairs(Workspace:GetDescendants()) do
+			for _, obj in ipairs(workspace:GetDescendants()) do
 				local bp = isAcornBasePart(obj)
 				if bp then best = bestAcornCandidate(best, bp); break end
 			end
@@ -725,8 +805,7 @@ local function ensureAcornGui()
 	end
 
 	-- AUTO HARVEST (v2.4 light) + LIMIT 100
-	local function lowerx(s) if typeof(s)=="string" then return string.lower(s) end return ""
-	end
+	local function lowerx(s) if typeof(s)=="string" then return string.lower(s) end return "" end
 	local function containsAny(s, list) for _,kw in ipairs(list) do if s:find(kw) then return true end end return false end
 	local function isPlantPrompt(prompt)
 		if not prompt or not prompt.Parent then return false end
@@ -754,7 +833,7 @@ local function ensureAcornGui()
 		return false
 	end
 
-	local AutoCollectBtn, AutoTPBtn, AutoHarvestBtn, AutoScan -- forward UI refs
+	local AutoCollectBtn, AutoTPBtn, AutoHarvestBtn, AutoScan
 	local function refreshButtons()
 		if AutoCollectBtn and AutoTPBtn then
 			local on = ac.autoTPOnDetect
@@ -787,7 +866,7 @@ local function ensureAcornGui()
 		local hrp=getHRP(); if not hrp then return prompts end
 		local params = OverlapParams.new(); params.FilterDescendantsInstances={player.Character}; params.FilterType=Enum.RaycastFilterType.Blacklist
 		local parts = {}
-		pcall(function() parts = Workspace:GetPartBoundsInRadius(hrp.Position, radius, params) end)
+		pcall(function() parts = workspace:GetPartBoundsInRadius(hrp.Position, radius, params) end)
 		local seen={}
 		for _, part in ipairs(parts) do
 			if part and part.Parent and not seen[part.Parent] then
@@ -830,7 +909,7 @@ local function ensureAcornGui()
 		end
 	end)
 
-	-- UI (responsive + scroll)
+	-- UI Acorn (responsive + scroll)
 	acornGui = Instance.new("ScreenGui"); acornGui.Name="AcornLite"; acornGui.ResetOnSpawn=false; acornGui.IgnoreGuiInset=false
 	acornGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	acornGui.DisplayOrder = 15
@@ -892,7 +971,7 @@ local function ensureAcornGui()
 		refreshButtons()
 	end)
 	ScanNow.MouseButton1Click:Connect(function() scanMapAcorn() end)
-	AutoScan.MouseButton1Click:Connect(function()
+	AutoScan_local.MouseButton1Click:Connect(function()
 		ac.scanAutoEnabled = not ac.scanAutoEnabled
 		refreshButtons()
 	end)
@@ -970,9 +1049,11 @@ local function applyGlobalScale()
 	if vp.Y < 720 or vp.X < 1100 then s = s * 0.92 end
 	if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then s = s * 0.90 end
 	s = math.clamp(s, 0.70, 1.0)
-	scaleMain.Scale = s
-	scaleGear.Scale = s
 	local ac = playerGui:FindFirstChild("AcornLite")
+	local mainGui = playerGui:FindFirstChild("SaadLite")
+	if mainGui then local u = mainGui:FindFirstChild("AutoScale"); if u then u.Scale = s end end
+	local gearGuiNode = playerGui:FindFirstChild("GearPanelLite")
+	if gearGuiNode then local u = gearGuiNode:FindFirstChild("AutoScale"); if u then u.Scale = s end end
 	if ac then local u = ac:FindFirstChild("AutoScale"); if u then u.Scale = s end end
 end
 applyGlobalScale()
@@ -988,7 +1069,6 @@ player.CharacterAdded:Connect(function(char)
 	if hum then hum.WalkSpeed = currentSpeed; hum.JumpPower = currentJump end
 	workspace.Gravity = currentGravity
 	if isNoclipping then task.wait(0.2); if noclipConnection then noclipConnection:Disconnect(); noclipConnection=nil end; isNoclipping=false; end
-	-- ✅ À chaque respawn, on remet une caméra saine
 	resetCameraSafe("respawn")
 end)
 
@@ -1003,6 +1083,5 @@ end)
 -- Bouton Player → Gear Panel (rappel forcé)
 gearBtn.MouseButton1Click:Connect(function() toggleGearPanel(true) end)
 
---==================================================
--- (⌘/Ctrl + clic TP) — SUPPRIMÉ et remplacé par "TP → khetameyn"
---==================================================
+-- Fin — prêt
+msg("UI initialisée.")
