@@ -1,15 +1,10 @@
 -- Saad helper pack v3.1-LITE+AUTO — Player Tuner + Gear Panel + Acorn Collector
--- Nouveautés :
--- 1) ✅ UI responsive : s’adapte au Viewport (mobile/tablette/desktop)
---    - Player Tuner : coin haut-gauche, taille = ~34% largeur / ~36% hauteur (bornée)
---    - Gear Panel   : coin haut-centre, taille = ~30% largeur / ~42% hauteur (bornée)
---    - Acorn Panel  : côté droit centré, taille = ~44% largeur / ~66% hauteur (bornée)
---    - Sur petits écrans, l’Acorn Panel n’occupe plus tout : contenu scrollable (accès au bouton "Scan Now")
--- 2) ✅ Compteur "Collected" corrigé (bug de redéclaration local) — fonctionne aussi sur mobile LITE
--- 3) ✅ Auto-buy d’office (sans UI) inchangé
--- 4) ✅ Minimize pour les 3 fenêtres + bouton Gear depuis Player Tuner (fix réouverture)
--- 5) ✅ Auto-scan 15s et activé d’office ; Auto-Harvest = OFF au départ
--- 6) ✅ Auto-Harvest "100 tentatives" : se coupe automatiquement (et si backpack plein)
+-- MODS demandés :
+-- 1) ❌ Retrait du bouton BUY EVO et de toute logique EVO
+-- 2) 🚀 Au lancement, WalkSpeed = +30% (≈ 21) appliqué
+-- 3) 🔁 Auto-buy SEEDS/GEAR/EGGS forcé ON et toutes les 60s
+-- 4) 🖱️/👆 TP on-clic : bouton pour activer le mode (clic/Touch) + prise en charge ⌘/Ctrl + Clic (Mac/PC)
+-- 5) 🍭 Bouton BUY 50x LOLLIPOP (BuyGearStock "Level Up Lollipop")
 
 --==================================================
 --=================  SETTINGS  =====================
@@ -18,19 +13,17 @@ local LIGHT_MODE = true                 -- 🟢 LITE mobile-friendly
 local VERBOSE_LOG = false               -- logs chat réduits
 local UI_REFRESH = 0.6                  -- intervalle MAJ texte UI (s)
 local COORDS_REFRESH = 1.0              -- coords HUD (s)
-local AUTO_SCAN_PERIOD = 15             -- ⏱️ auto-scan (sec) — DEMANDÉ: 15s
+local AUTO_SCAN_PERIOD = 15             -- ⏱️ auto-scan (sec)
 local AUTO_HARVEST_TICK = 0.20          -- v2.4 allégé
 local DISABLE_SOUNDS = true             -- pas de sons
 local GC_SWEEP_EVERY = 60               -- GC périodique (sec)
 
--- Auto-buy (sans UI) — activé d’office
-local AUTO_PERIOD_SEEDS = 150           -- 2:30
-local AUTO_PERIOD_GEAR  = 150           -- 2:30
-local AUTO_PERIOD_EVENT = 55            -- 0:55
-local AUTO_PERIOD_EGGS  = 450           -- 7:30
+-- Auto-buy (sans UI) — activé d’office, toutes les 60s
+local AUTO_PERIOD_SEEDS = 60
+local AUTO_PERIOD_GEAR  = 60
+local AUTO_PERIOD_EGGS  = 60
 local AUTO_BUY_SEEDS = true
 local AUTO_BUY_GEAR  = true
-local AUTO_BUY_EVENT = true
 local AUTO_BUY_EGGS  = true
 
 --==================================================
@@ -46,6 +39,7 @@ local Workspace           = game:GetService("Workspace")
 local VirtualUser         = game:GetService("VirtualUser")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local SoundService        = game:GetService("SoundService")
+local GuiService          = game:GetService("GuiService")
 
 local player    = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -84,6 +78,16 @@ local function fmtTime(sec)
 	local m = math.floor(sec/60)
 	local s = sec % 60
 	return string.format("%d:%02d",m,s)
+end
+
+local function isOverAnyUI(pos)
+	local list = GuiService:GetGuiObjectsAtPosition(pos.X, pos.Y)
+	for _, obj in ipairs(list) do
+		if obj:IsDescendantOf(playerGui) then
+			return true
+		end
+	end
+	return false
 end
 
 -- UI helpers
@@ -157,7 +161,6 @@ local function ensureUIScale(screenGui)
 end
 
 -- Attach responsive behavior to a frame:
--- opts = { anchor="leftTop"/"rightCenter"/"topCenter", w_pct=0.44, h_pct=0.66, minW=260, minH=220, maxW=560, maxH=620, offset={x=10,y=10} }
 local function makeResponsive(frame, opts)
 	local cam = workspace.CurrentCamera
 	local function apply()
@@ -227,7 +230,7 @@ end
 --=============  PLAYER TUNER (LITE)  ==============
 --==================================================
 local DEFAULT_GRAVITY, DEFAULT_JUMPPOWER, DEFAULT_WALKSPEED = 196.2, 50, 16
-local currentSpeed, currentGravity, currentJump = 18, 147.1, 60
+local currentSpeed, currentGravity, currentJump = math.floor(DEFAULT_WALKSPEED*1.3 + 0.5), 147.1, 60 -- +30% speed au lancement
 local isNoclipping, noclipConnection = false, nil
 
 local function applySpeed(v)   currentSpeed=v;  local h=player.Character and player.Character:FindFirstChildOfClass("Humanoid"); if h then h.WalkSpeed=v end end
@@ -254,7 +257,7 @@ end
 
 -- Anti-AFK simple (⚠️ ON par défaut)
 local ANTI_AFK_PERIOD, ANTI_AFK_DURATION = 60, 0.35
-local antiAFKEnabled = true  -- DEMANDÉ: ON au lancement
+local antiAFKEnabled = true
 player.Idled:Connect(function()
 	pcall(function()
 		VirtualUser:CaptureController()
@@ -289,14 +292,8 @@ end
 local function getSellInventoryRemote()  local r=safeWait({"GameEvents","Sell_Inventory"},2)                return (r and r:IsA("RemoteEvent")) and r or nil end
 local function getBuySeedRemote()        local r=safeWait({"GameEvents","BuySeedStock"},2)                  return (r and r:IsA("RemoteEvent")) and r or nil end
 local function getBuyGearRemote()        local r=safeWait({"GameEvents","BuyGearStock"},2)                  return (r and r:IsA("RemoteEvent")) and r or nil end
-local function getBuyEventRemote()
-	local r=safeWait({"GameEvents","BuyEventShopStock"},2)
-	if r and r:IsA("RemoteEvent") then return r end
-	r=safeWait({"GameEvents","FallMarketEvent","BuyEventShopStock"},2)
-	return (r and r:IsA("RemoteEvent")) and r or nil
-end
-local function getBuyPetEggRemote() local r=safeWait({"GameEvents","BuyPetEgg"},2) return (r and r:IsA("RemoteEvent")) and r or nil end
-local function getSubmitChipmunkRemote() local r=safeWait({"GameEvents","SubmitChipmunkFruit"},2) return (r and r:IsA("RemoteEvent")) and r or nil end
+local function getBuyPetEggRemote()      local r=safeWait({"GameEvents","BuyPetEgg"},2)                     return (r and r:IsA("RemoteEvent")) and r or nil end
+local function getSubmitChipmunkRemote() local r=safeWait({"GameEvents","SubmitChipmunkFruit"},2)           return (r and r:IsA("RemoteEvent")) and r or nil end
 
 local SEED_TIER = "Tier 1"
 local SEEDS = { "Carrot","Strawberry","Blueberry","Orange Tulip","Tomato","Corn","Daffodil","Watermelon","Pumpkin","Apple","Bamboo","Coconut","Cactus","Dragon Fruit","Mango","Grape","Mushroom","Pepper","Cacao","Beanstalk","Ember Lily","Sugar Apple","Burning Bud","Giant Pinecone","Elder Strawberry","Romanesco","Crimson Thorn" }
@@ -316,16 +313,21 @@ local function buyAllGearWorker()
 		for _=1,MAX_TRIES_PER_GEAR do pcall(function() r:FireServer(g) end) task.wait(0.06) end
 	end
 end
-local EVO_LIST = { "Evo Beetroot I","Evo Blueberry I","Evo Pumpkin I","Evo Mushroom I" }
-local function buyEventEvosWorker()
-	local r = getBuyEventRemote(); if not r then msg("❌ BuyEventShopStock introuvable."); return end
-	for _, name in ipairs(EVO_LIST) do pcall(function() r:FireServer(name, 1) end); task.wait(0.06) end
-end
 local function buyAllEggsWorker()
 	local r = getBuyPetEggRemote(); if not r then msg("❌ BuyPetEgg introuvable."); return end
 	for _, egg in ipairs(EGGS) do pcall(function() r:FireServer(egg) end); task.wait(0.06) end
 end
 local function submitAllChipmunk() local r = getSubmitChipmunkRemote(); if r then pcall(function() r:FireServer("All") end) end end
+
+-- 🍭 BUY 50x LOLLIPOP (tente aussi variante d’orthographe)
+local function buyLollipop50()
+	local r = getBuyGearRemote(); if not r then msg("❌ BuyGearStock introuvable."); return end
+	for i=1,50 do
+		local ok = pcall(function() r:FireServer("Level Up Lollipop") end)
+		if not ok then pcall(function() r:FireServer("Levelup Lollipop") end) end
+		task.wait(0.06)
+	end
+end
 
 --==================================================
 --=================  MAIN UI  ======================
@@ -364,7 +366,7 @@ end
 -- Player Tuner panel (responsive) + minimize
 local main = makeFrame(screenGui, UDim2.fromOffset(300, 260), UDim2.fromOffset(20, 20), Color3.fromRGB(36,36,36))
 local title = makeFrame(main, UDim2.new(1,0,0,32), UDim2.fromOffset(0,0), Color3.fromRGB(28,28,28))
-makeLabel(title, "🎚️ PLAYER TUNER (LITE)", UDim2.new(1,-90,1,0), UDim2.new(0,10,0,0), Color3.fromRGB(255,255,255), true)
+makeLabel(title, "🎚️ PLAYER TUNER (LITE)", UDim2.new(1,-120,1,0), UDim2.new(0,10,0,0), Color3.fromRGB(255,255,255), true)
 local closeBtn    = makeButton(title, "✕", UDim2.fromOffset(26,26), UDim2.new(1,-34,0,3), Color3.fromRGB(255,72,72))
 local minimizeBtn = makeButton(title, "—", UDim2.fromOffset(26,26), UDim2.new(1,-66,0,3), Color3.fromRGB(110,110,110))
 
@@ -416,12 +418,13 @@ local gravitySlider = simpleSlider(58,  "Gravity (37.5–196.2)", 37.5,196.2, 0.
 local jumpSlider    = simpleSlider(116, "Jump Power (45–82.5)", 45, 82.5, 0.5, currentJump,    applyJump)
 
 local rowBtn   = makeFrame(content, UDim2.new(1,0,0,36), UDim2.new(0,0,0,174), Color3.fromRGB(36,36,36)); rowBtn.BackgroundTransparency=1
-local resetBtn = makeButton(rowBtn, "↩️ Reset",           UDim2.new(0.33,-6,1,0), UDim2.new(0,0,0,0),  Color3.fromRGB(70,100,180))
-local noclipBtn= makeButton(rowBtn, "🚫 NO CLIP: OFF",     UDim2.new(0.33,-6,1,0), UDim2.new(0.335,6,0,0), Color3.fromRGB(220,60,60))
-local gearBtn  = makeButton(rowBtn, "🛒 Gear Panel",       UDim2.new(0.33,0,1,0), UDim2.new(0.67,6,0,0), Color3.fromRGB(60,180,60))
+local resetBtn = makeButton(rowBtn, "↩️ Reset",           UDim2.new(0.25,-6,1,0), UDim2.new(0,0,0,0),  Color3.fromRGB(70,100,180))
+local noclipBtn= makeButton(rowBtn, "🚫 NO CLIP: OFF",     UDim2.new(0.25,-6,1,0), UDim2.new(0.25,6,0,0), Color3.fromRGB(220,60,60))
+local tpClickBtn = makeButton(rowBtn,"🌀 TP ON-CLICK: OFF",UDim2.new(0.25,-6,1,0), UDim2.new(0.50,6,0,0), Color3.fromRGB(90,120,200))
+local gearBtn  = makeButton(rowBtn, "🛒 Gear Panel",       UDim2.new(0.25,0,1,0), UDim2.new(0.75,6,0,0), Color3.fromRGB(60,180,60))
 
 local antiRow    = makeFrame(content, UDim2.new(1,0,0,36), UDim2.new(0,0,0,212), Color3.fromRGB(36,36,36)); antiRow.BackgroundTransparency=1
-local antiAFKBtn = makeButton(antiRow, "🛡️ Anti-AFK: OFF", UDim2.new(0.6,-6,1,0), UDim2.new(0,0,0,0), Color3.fromRGB(100,130,100))
+local antiAFKBtn = makeButton(antiRow, "🛡️ Anti-AFK: ON", UDim2.new(0.6,-6,1,0), UDim2.new(0,0,0,0), Color3.fromRGB(80,140,90))
 local openAcorn  = makeButton(antiRow, "🌰 ACORN COLLECTOR", UDim2.new(0.4,0,1,0), UDim2.new(0.6,6,0,0), Color3.fromRGB(200,160,60))
 
 resetBtn.MouseButton1Click:Connect(function()
@@ -448,16 +451,14 @@ closeBtn.MouseButton1Click:Connect(function()
 	if screenGui then screenGui:Destroy() end
 end)
 
--- Synchro état initial Anti-AFK (ON au lancement)
-if antiAFKEnabled then
-	antiAFKBtn.Text = "🛡️ Anti-AFK: ON"
-	antiAFKBtn.BackgroundColor3 = Color3.fromRGB(80,140,90)
+-- TP on-click toggle
+local tpOnClickEnabled = false
+local function refreshTPBtn()
+	tpClickBtn.Text = tpOnClickEnabled and "🌀 TP ON-CLICK: ON" or "🌀 TP ON-CLICK: OFF"
+	tpClickBtn.BackgroundColor3 = tpOnClickEnabled and Color3.fromRGB(70,180,90) or Color3.fromRGB(90,120,200)
 end
-antiAFKBtn.MouseButton1Click:Connect(function()
-	antiAFKEnabled = not antiAFKEnabled
-	antiAFKBtn.Text = antiAFKEnabled and "🛡️ Anti-AFK: ON" or "🛡️ Anti-AFK: OFF"
-	antiAFKBtn.BackgroundColor3 = antiAFKEnabled and Color3.fromRGB(80,140,90) or Color3.fromRGB(100,130,100)
-end)
+refreshTPBtn()
+tpClickBtn.MouseButton1Click:Connect(function() tpOnClickEnabled = not tpOnClickEnabled; refreshTPBtn() end)
 
 --==================================================
 --=================  GEAR PANEL  ===================
@@ -485,8 +486,9 @@ local sellBtn = makeButton(gbody, "🧺 SELL INVENTORY",    UDim2.new(1,0,0,28),
 local chipBtn = makeButton(gbody, "🍁 SUBMIT ALL (Chip)", UDim2.new(1,0,0,28), UDim2.new(0,0,0,64),  Color3.fromRGB(90,140,210))
 local seedsBtn= makeButton(gbody, "🌱 BUY ALL SEEDS",     UDim2.new(1,0,0,28), UDim2.new(0,0,0,96),  Color3.fromRGB(100,170,100))
 local gearBtn2= makeButton(gbody, "🧰 BUY ALL GEAR",      UDim2.new(1,0,0,28), UDim2.new(0,0,0,128), Color3.fromRGB(120,140,200))
-local evoBtn  = makeButton(gbody, "🍁 BUY EVO (x1)",      UDim2.new(1,0,0,28), UDim2.new(0,0,0,160), Color3.fromRGB(200,140,90))
-local eggsBtn = makeButton(gbody, "🥚 BUY EGGS",          UDim2.new(1,0,0,28), UDim2.new(0,0,0,192), Color3.fromRGB(150,120,200))
+-- ❌ EVO retiré
+local eggsBtn = makeButton(gbody, "🥚 BUY EGGS",          UDim2.new(1,0,0,28), UDim2.new(0,0,0,160), Color3.fromRGB(150,120,200))
+local lolliBtn= makeButton(gbody, "🍭 BUY 50x LOLLIPOP",  UDim2.new(1,0,0,28), UDim2.new(0,0,0,192), Color3.fromRGB(220,120,200))
 local coordsLabel = makeLabel(gbody, "Position: (…)",     UDim2.new(1,0,0,18), UDim2.new(0,0,0,224), Color3.fromRGB(200,200,255), false)
 
 -- Toggle / Force-Open robuste pour Gear
@@ -502,7 +504,6 @@ local function toggleGearPanel(forceOpen)
 end
 
 gclose.MouseButton1Click:Connect(function() gearFrame.Visible=false end)
--- ⚠️ DEMANDÉ: le bouton du Player Tuner rouvre toujours
 gearBtn.MouseButton1Click:Connect(function() toggleGearPanel(true) end)
 
 tpGear.MouseButton1Click:Connect(function() teleportTo(GEAR_SHOP_POS) end)
@@ -517,8 +518,8 @@ end)
 chipBtn.MouseButton1Click:Connect(submitAllChipmunk)
 seedsBtn.MouseButton1Click:Connect(buyAllSeedsWorker)
 gearBtn2.MouseButton1Click:Connect(buyAllGearWorker)
-evoBtn.MouseButton1Click:Connect(buyEventEvosWorker)
 eggsBtn.MouseButton1Click:Connect(buyAllEggsWorker)
+lolliBtn.MouseButton1Click:Connect(buyLollipop50)
 
 -- Live coords (ralenti)
 task.spawn(function()
@@ -564,17 +565,15 @@ local function ensureAcornGui()
 	ac.nextSpawnTime = tick() + ac.config.normalSpawnInterval
 	ac.currentAcorn = nil
 	ac.autoTPOnDetect = true            -- ON par défaut
-	ac.autoHarvestEnabled = false       -- OFF par défaut (DEMANDÉ)
+	ac.autoHarvestEnabled = false       -- OFF par défaut
 	ac.isNuttyFever = false
 	ac.feverLastSeenAt = 0
 	ac.acornCollected = 0
-	ac.scanAutoEnabled = true           -- DEMANDÉ: Auto-scan ON par défaut
-	ac.scanPeriod = AUTO_SCAN_PERIOD    -- 15s
-	-- Limite Auto-Harvest (100 tentatives)
+	ac.scanAutoEnabled = true           -- Auto-scan ON par défaut
+	ac.scanPeriod = AUTO_SCAN_PERIOD
 	ac.harvestLimit = 100
 	ac.harvestAttempts = 0
 
-	-- Backpack auto-detect
 	ac.backpackCountValue, ac.backpackCapValue = nil, nil
 	local function isVal(x) return x and (x:IsA("IntValue") or x:IsA("NumberValue")) end
 	local COUNT_NAMES = { "count","current","amount","qty","quantity","items","inventory","backpack","bag","held","stored" }
@@ -806,12 +805,10 @@ local function ensureAcornGui()
 	task.spawn(function()
 		while true do
 			if ac.autoHarvestEnabled then
-				-- stop si backpack plein
 				if ac.config.stopHarvestWhenBackpackFull and isBackpackFull() then
 					ac.autoHarvestEnabled=false
 					refreshButtons()
 				else
-					-- tente jusqu'à la limite
 					local prompts = ac.config.autoHarvestUsePrompts and getNearbyPlantPrompts(ac.config.autoHarvestRadius) or {}
 					for _, prompt in ipairs(prompts) do
 						if not ac.autoHarvestEnabled then break end
@@ -867,13 +864,11 @@ local function ensureAcornGui()
 	local ScanNow   = makeButton(ScanRow, "🔎 Scan Now (Y 1–4)", UDim2.new(0.48,-4,1,0), UDim2.new(0,0,0,0), Color3.fromRGB(90,140,210))
 	local AutoScan_local  = makeButton(ScanRow, "📡 Auto-scan: ON ("..tostring(ac.scanPeriod).."s)", UDim2.new(0.52,0,1,0), UDim2.new(0.48,4,0,0), Color3.fromRGB(110,150,90))
 
-	-- lier refs
 	AutoCollectBtn, AutoTPBtn, AutoHarvestBtn, AutoScan = AutoCollectBtn_local, AutoTPBtn_local, AutoHarvestBtn_local, AutoScan_local
 
 	makeDraggable(Main, Header)
 	attachMinimize(Main, Scroll, Min, Main.Size, 40)
 
-	-- Responsive Acorn + scroll
 	local function applyAcornResp()
 		makeResponsive(Main, {anchor="rightCenter", w_pct=0.44, h_pct=0.66, minW=280, minH=280, maxW=640, maxH=720, offset={x=10,y=10}})()
 		updateCanvas()
@@ -885,7 +880,6 @@ local function ensureAcornGui()
 
 	Close.MouseButton1Click:Connect(function() acornGui.Enabled=false end)
 
-	-- Boutons (syncs)
 	AutoCollectBtn.MouseButton1Click:Connect(function()
 		ac.autoTPOnDetect = not ac.autoTPOnDetect
 		refreshButtons()
@@ -896,9 +890,7 @@ local function ensureAcornGui()
 	end)
 	AutoHarvestBtn.MouseButton1Click:Connect(function()
 		ac.autoHarvestEnabled = not ac.autoHarvestEnabled
-		if ac.autoHarvestEnabled then
-			ac.harvestAttempts = 0 -- reset compteur à chaque activation
-		end
+		if ac.autoHarvestEnabled then ac.harvestAttempts = 0 end
 		refreshButtons()
 	end)
 	ScanNow.MouseButton1Click:Connect(function() scanMapAcorn() end)
@@ -907,7 +899,6 @@ local function ensureAcornGui()
 		refreshButtons()
 	end)
 
-	-- Tick UI
 	task.spawn(function()
 		while acornGui and acornGui.Parent do
 			if not acornGui.Enabled then task.wait(0.3) else
@@ -926,7 +917,6 @@ local function ensureAcornGui()
 		end
 	end)
 
-	-- Auto-scan worker
 	task.spawn(function()
 		while acornGui and acornGui.Parent do
 			if ac.scanAutoEnabled then
@@ -955,20 +945,18 @@ openAcorn.MouseButton1Click:Connect(toggleAcornUI)
 --==================================================
 --==========  AUTO-BUY BACKGROUND (ON)  ============
 --==================================================
-local seedsTimer, gearTimer, eventTimer, eggsTimer =
-	AUTO_PERIOD_SEEDS, AUTO_PERIOD_GEAR, AUTO_PERIOD_EVENT, AUTO_PERIOD_EGGS
+local seedsTimer, gearTimer, eggsTimer =
+	AUTO_PERIOD_SEEDS, AUTO_PERIOD_GEAR, AUTO_PERIOD_EGGS
 
 task.spawn(function()
 	while true do
 		task.wait(1)
 		if AUTO_BUY_SEEDS then seedsTimer = seedsTimer - 1 else seedsTimer = AUTO_PERIOD_SEEDS end
 		if AUTO_BUY_GEAR  then gearTimer  = gearTimer  - 1 else gearTimer  = AUTO_PERIOD_GEAR  end
-		if AUTO_BUY_EVENT then eventTimer = eventTimer - 1 else eventTimer = AUTO_PERIOD_EVENT end
 		if AUTO_BUY_EGGS  then eggsTimer  = eggsTimer  - 1 else eggsTimer  = AUTO_PERIOD_EGGS  end
 
 		if AUTO_BUY_SEEDS and seedsTimer<=0 then task.spawn(buyAllSeedsWorker); seedsTimer=AUTO_PERIOD_SEEDS end
 		if AUTO_BUY_GEAR  and gearTimer<=0  then task.spawn(buyAllGearWorker);  gearTimer =AUTO_PERIOD_GEAR  end
-		if AUTO_BUY_EVENT and eventTimer<=0 then task.spawn(buyEventEvosWorker); eventTimer=AUTO_PERIOD_EVENT end
 		if AUTO_BUY_EGGS  and eggsTimer<=0  then task.spawn(buyAllEggsWorker);  eggsTimer =AUTO_PERIOD_EGGS  end
 	end
 end)
@@ -1014,3 +1002,51 @@ end)
 
 -- Bouton Player → Gear Panel (rappel forcé)
 gearBtn.MouseButton1Click:Connect(function() toggleGearPanel(true) end)
+
+--==================================================
+--=======  ⌘/Ctrl + CLIC  (pattern v3.0)  ==========
+--==================================================
+do
+	local mouse = player:GetMouse()
+	local function metaOrCtrlDown()
+		return UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
+			or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
+			or UserInputService:IsKeyDown(Enum.KeyCode.LeftMeta)
+			or UserInputService:IsKeyDown(Enum.KeyCode.RightMeta)
+	end
+
+	-- Souris: ⌘/Ctrl + clic => TP; sinon si mode TP ON-CLICK actif => TP
+	mouse.Button1Down:Connect(function()
+		local mpos = UserInputService:GetMouseLocation()
+		if isOverAnyUI(mpos) then return end
+
+		local hit = mouse.Hit
+		if not hit then return end
+
+		if metaOrCtrlDown() or tpOnClickEnabled then
+			local p = hit.Position + Vector3.new(0,3,0)
+			teleportTo(p)
+		end
+	end)
+
+	-- Mobile: tap => si TP ON-CLICK actif, raycast depuis l’écran
+	UserInputService.TouchTap:Connect(function(touchPositions, processed)
+		if processed or not tpOnClickEnabled then return end
+		local cam = workspace.CurrentCamera
+		if not cam or #touchPositions == 0 then return end
+		local pos = touchPositions[1]
+		if isOverAnyUI(Vector2.new(pos.X, pos.Y)) then return end
+		local ray = cam:ViewportPointToRay(pos.X, pos.Y, 0)
+		local params = RaycastParams.new()
+		params.FilterDescendantsInstances = {player.Character}
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		local result = Workspace:Raycast(ray.Origin, ray.Direction * 1000, params)
+		local dest
+		if result and result.Position then
+			dest = result.Position + Vector3.new(0,3,0)
+		else
+			dest = ray.Origin + ray.Direction.Unit * 50
+		end
+		teleportTo(dest)
+	end)
+end
