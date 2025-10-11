@@ -1,116 +1,102 @@
--- Saad helper pack v3.1-LITE+AUTO — Player Tuner + Gear Panel + Acorn Collector
--- Fix démarrage : bootstrap robuste (game loaded + LocalPlayer + PlayerGui + CurrentCamera)
--- + Camera watchdog + TP → khetameyn + freeze caméra désactivé pour Acorn
+-- =====================================================================
+-- 🧰 Saad Helper Pack — Build Complet (Player Tuner + Gear + MiniPanel)
+-- - ⌘/Ctrl + Clic = TP (Mac/Windows) — sans freeze caméra
+-- - UI Player Tuner (sliders + noclip + anti-AFK + Gear Panel + Mini Panel)
+-- - Gear Panel: Sell, Submit Cauldron, Buy All Seeds/Gear/Eggs + Auto/60s ON
+-- - Seeds inclut "Great Pumpkin" (shop) — auto-buy actif
+-- - Bouton: Buy "Level Up Lollipop" x50 (essaie 2 noms possibles)
+-- - Mini Panel v3.2 (✕ fermer) :
+--     • Auto Harvest v4 (hybride & robuste) — FIX (PromptShown + scan rayon)
+--     • Auto Harvest v2.4 (prompts) -> STOP auto si backpack plein (valeurs OU popup GUI)
+--     • Submit All (Cauldron)
+--     • Event Seeds (Spooky) par plante
+-- - Raccourcis: H = toggle Auto Harvest v2.4 • J = toggle Auto Harvest v4
+-- =====================================================================
 
---==================================================
---==================== BOOTSTRAP ===================
---==================================================
-local function waitGameLoaded()
-	if not game:IsLoaded() then
-		game.Loaded:Wait()
-	end
-end
+--// Services
+local Players                 = game:GetService("Players")
+local UserInputService        = game:GetService("UserInputService")
+local RunService              = game:GetService("RunService")
+local StarterGui              = game:GetService("StarterGui")
+local ReplicatedStorage       = game:GetService("ReplicatedStorage")
+local TweenService            = game:GetService("TweenService")
+local Workspace               = game:GetService("Workspace")
+local VirtualUser             = game:GetService("VirtualUser")
+local VirtualInputManager     = game:GetService("VirtualInputManager")
+local ProximityPromptService  = game:GetService("ProximityPromptService")
+local CollectionService       = game:GetService("CollectionService")
+local SoundService            = game:GetService("SoundService")
 
-waitGameLoaded()
+local player    = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
 
-local Players           = game:GetService("Players")
-local UserInputService  = game:GetService("UserInputService")
-local RunService        = game:GetService("RunService")
-local StarterGui        = game:GetService("StarterGui")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService      = game:GetService("TweenService")
-local WorkspaceService  = game:GetService("Workspace")
-local VirtualUser       = game:GetService("VirtualUser")
-local SoundService      = game:GetService("SoundService")
-local GuiService        = game:GetService("GuiService")
+--// Consts
+local DEFAULT_GRAVITY, DEFAULT_JUMPPOWER, DEFAULT_WALKSPEED = 196.2, 50, 16
+local GEAR_SHOP_POS = Vector3.new(-288, 2, -15)
+local SELL_NPC_POS  = Vector3.new(87, 3, 0)
 
-local player = Players.LocalPlayer or Players.PlayerAdded:Wait()
-if not player.Character then player.CharacterAdded:Wait() end
+-- Anti-AFK
+local ANTI_AFK_PERIOD   = 60
+local ANTI_AFK_DURATION = 0.35
 
--- Assure la présence de PlayerGui et de la caméra
-local playerGui = player:FindFirstChild("PlayerGui") or player:WaitForChild("PlayerGui")
-while not workspace.CurrentCamera do task.wait() end
+-- Periods (auto-buy)
+local AUTO_PERIOD = 60 -- ❗ 60s demandé
 
--- Petit helper de log (désactivable)
-local VERBOSE_LOG = false
+-- Seeds/Gears/Eggs
+local SEED_TIER = "Tier 1"
+local SEEDS = {
+	"Carrot","Strawberry","Blueberry","Orange Tulip","Tomato","Corn","Daffodil","Watermelon",
+	"Pumpkin","Apple","Bamboo","Coconut","Cactus","Dragon Fruit","Mango","Grape","Mushroom",
+	"Pepper","Cacao","Beanstalk","Ember Lily","Sugar Apple","Burning Bud","Giant Pinecone",
+	"Elder Strawberry","Romanesco","Crimson Thorn",
+	"Great Pumpkin" -- 🎃 demandé (shop)
+}
+local GEARS = {
+	"Watering Can","Trading Ticket","Trowel","Recall Wrench","Basic Sprinkler","Advanced Sprinkler",
+	"Medium Toy","Medium Treat","Godly Sprinkler","Magnifying Glass","Master Sprinkler",
+	"Cleaning Spray","Cleansing Pet Shard","Favorite Tool","Harvest Tool","Friendship Pot",
+	"Grandmaster Sprinkler","Level Up Lollipop" -- (on essaiera aussi "Levelup Lollipop")
+}
+local EGGS = { "Common Egg","Uncommon Egg","Rare Egg","Legendary Egg","Mythical Egg","Bug Egg","Jungle Egg" }
+
+--// State
+local currentSpeed, currentGravity, currentJump = 18, 147.1, 60
+local isNoclipping, noclipConnection = false, nil
+local autoBuySeeds, autoBuyGear, autoBuyEggs = true, true, true -- ✅ ON d’office
+local seedsTimer, gearTimer, eggsTimer = AUTO_PERIOD, AUTO_PERIOD, AUTO_PERIOD
+
+local antiAFKEnabled = false
+local seedsTimerLabel, gearTimerLabel, eggsTimerLabel
+local screenGui, gearGui
+local gearFrame
+local coordsLabel
+
+-- =========================================================
+-- ====================== Utils / Logs =====================
+-- =========================================================
 local function msg(text, color)
-	if not VERBOSE_LOG then return end
 	pcall(function()
 		StarterGui:SetCore("ChatMakeSystemMessage", {
-			Text = "[SaadLite] "..tostring(text),
-			Color = color or Color3.fromRGB(200,200,255),
+			Text = tostring(text),
+			Color = color or Color3.fromRGB(200,230,255),
 			Font = Enum.Font.Gotham,
 			FontSize = Enum.FontSize.Size12,
 		})
 	end)
 end
-msg("Bootstrap OK.")
-
---==================================================
---=================  SETTINGS  =====================
---==================================================
-local LIGHT_MODE = true
-local UI_REFRESH = 0.6
-local COORDS_REFRESH = 1.0
-local AUTO_SCAN_PERIOD = 15
-local AUTO_HARVEST_TICK = 0.20
-local DISABLE_SOUNDS = true
-local GC_SWEEP_EVERY = 60
-
--- Auto-buy (sans UI) — activé d’office, toutes les 60s
-local AUTO_PERIOD_SEEDS = 60
-local AUTO_PERIOD_GEAR  = 60
-local AUTO_PERIOD_EGGS  = 60
-local AUTO_BUY_SEEDS = true
-local AUTO_BUY_GEAR  = true
-local AUTO_BUY_EGGS  = true
-
---==================================================
---=================  UTILS  ========================
---==================================================
-local function safeWait(path, timeout)
-	local node=ReplicatedStorage
-	for _,name in ipairs(path) do
-		node = node:WaitForChild(name, timeout)
-		if not node then return nil end
-	end
-	return node
-end
-
 local function getHRP()
 	local c = player.Character
 	return c and c:FindFirstChild("HumanoidRootPart")
 end
-local function getHumanoid()
-	local c = player.Character
-	return c and c:FindFirstChildOfClass("Humanoid")
-end
+local function applySpeed(v)   currentSpeed=v;  local h=player.Character and player.Character:FindFirstChildOfClass("Humanoid"); if h then h.WalkSpeed=v end end
+local function applyGravity(v) currentGravity=v; workspace.Gravity=v end
+local function applyJump(v)    currentJump=v;   local h=player.Character and player.Character:FindFirstChildOfClass("Humanoid"); if h then h.JumpPower=v end end
+local function resetDefaults() applySpeed(DEFAULT_WALKSPEED); applyGravity(DEFAULT_GRAVITY); applyJump(DEFAULT_JUMPPOWER); msg("↩️ Reset (16 / 196.2 / 50).", Color3.fromRGB(180,220,255)) end
+local function teleportTo(p) local hrp=getHRP(); if not hrp then msg("❌ HRP introuvable.", Color3.fromRGB(255,100,100)) return end; hrp.CFrame=CFrame.new(p) end
+local function fmtTime(sec) sec=math.max(0,math.floor(sec+0.5)) local m=math.floor(sec/60) local s=sec%60 return string.format("%d:%02d",m,s) end
+local function lower(s) return typeof(s)=="string" and string.lower(s) or "" end
 
-local function fmtTime(sec)
-	sec = math.max(0, math.floor(sec + 0.5))
-	local m = math.floor(sec/60)
-	local s = sec % 60
-	return string.format("%d:%02d",m,s)
-end
-
-local function isOverAnyUI(pos)
-	local list = GuiService:GetGuiObjectsAtPosition(pos.X, pos.Y)
-	for _, obj in ipairs(list) do
-		if obj:IsDescendantOf(playerGui) then
-			return true
-		end
-	end
-	return false
-end
-
--- UI helpers
-local function rounded(obj, r)
-	local ui = Instance.new("UICorner")
-	ui.CornerRadius = UDim.new(0, r or 8)
-	ui.Parent = obj
-	return ui
-end
-
+-- Clamp UI à l’écran
 local function clampOnScreen(frame)
 	task.defer(function()
 		if not frame or not frame.Parent then return end
@@ -124,371 +110,394 @@ local function clampOnScreen(frame)
 	end)
 end
 
-local function makeButton(parent, text, size, pos, bg)
-	local b = Instance.new("TextButton")
-	b.Size = size; b.Position = pos
-	b.BackgroundColor3 = bg or Color3.fromRGB(70,100,180)
-	b.TextColor3 = Color3.fromRGB(255,255,255)
-	b.Text = text; b.Font = Enum.Font.GothamBold; b.TextSize = 13
-	b.Parent = parent; rounded(b,8)
-	return b
-end
-local function makeLabel(parent, text, size, pos, color, bold)
-	local l = Instance.new("TextLabel"); l.Size=size; l.Position=pos
-	l.BackgroundTransparency = 1; l.TextColor3 = color or Color3.fromRGB(220,230,255)
-	l.Font = bold and Enum.Font.GothamBold or Enum.Font.Gotham
-	l.TextSize = bold and 16 or 12; l.Text = text; l.TextXAlignment=Enum.TextXAlignment.Left
-	l.Parent = parent; return l
-end
-local function makeFrame(parent, size, pos, bg)
-	local f=Instance.new("Frame"); f.Size=size; f.Position=pos; f.BackgroundColor3=bg or Color3.fromRGB(36,36,36); f.BorderSizePixel=0; f.Parent=parent; rounded(f,10); return f
-end
-
--- Minimize helper
-local function attachMinimize(frame, contentFrame, minBtn, fullSize, collapsedHeight)
-	local isMin = false
-	local collapsedSize = UDim2.new(0, fullSize.X.Offset, 0, collapsedHeight)
-	local function setMin(v)
-		isMin = v
-		if isMin then
-			contentFrame.Visible = false
-			frame.Size = collapsedSize
-			minBtn.Text = "▣"
-		else
-			frame.Size = fullSize
-			contentFrame.Visible = true
-			minBtn.Text = "—"
-		end
-	end
-	minBtn.MouseButton1Click:Connect(function() setMin(not isMin) end)
-	setMin(false)
-	return setMin
-end
-
--- Responsive sizing & autoscale (UIScale + pixel size by %)
-local function ensureUIScale(screenGui)
-	local u = screenGui:FindFirstChild("AutoScale") or Instance.new("UIScale")
-	u.Name = "AutoScale"
-	u.Parent = screenGui
-	return u
-end
-
--- Attach responsive behavior to a frame:
-local function makeResponsive(frame, opts)
+-- AutoScale
+local function applyAutoScale(screenGuiX, clampTargets)
 	local cam = workspace.CurrentCamera
-	local function apply()
-		if not cam then cam = workspace.CurrentCamera end
+	local scaleObj = screenGuiX:FindFirstChild("AutoScale") or Instance.new("UIScale")
+	scaleObj.Name = "AutoScale"
+	scaleObj.Parent = screenGuiX
+	local function computeScale()
 		local vp = (cam and cam.ViewportSize) or Vector2.new(1280, 720)
-		local w = math.clamp(math.floor(vp.X * (opts.w_pct or 0.44)), opts.minW or 260, opts.maxW or 620)
-		local h = math.clamp(math.floor(vp.Y * (opts.h_pct or 0.66)), opts.minH or 220, opts.maxH or 720)
-		frame.Size = UDim2.fromOffset(w, h)
-		local ox = (opts.offset and opts.offset.x) or 10
-		local oy = (opts.offset and opts.offset.y) or 10
-		local anchor = opts.anchor or "rightCenter"
-		if anchor == "leftTop" then
-			frame.Position = UDim2.fromOffset(ox, oy)
-		elseif anchor == "topCenter" then
-			frame.Position = UDim2.fromOffset(math.max(ox, math.floor((vp.X - w)/2)), oy)
-		else -- rightCenter
-			frame.Position = UDim2.fromOffset(math.max(ox, vp.X - w - ox), math.max(oy, math.floor((vp.Y - h)/2)))
-		end
+		local w, h = vp.X, vp.Y
+		local baseWidth = 1280
+		local s = w / baseWidth
+		if h < 720 or w < 1100 then s = s * 0.9 end
+		if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then s = s * 0.9 end
+		return math.clamp(s, 0.55, 1.0)
 	end
-	apply()
-	if cam then cam:GetPropertyChangedSignal("ViewportSize"):Connect(apply) end
-	UserInputService:GetPropertyChangedSignal("TouchEnabled"):Connect(apply)
-	return apply
-end
-
-local function ensureScrolling(parentFrame, contentFrame)
-	local scroll = Instance.new("ScrollingFrame")
-	scroll.Name = "Scroll"
-	scroll.BackgroundTransparency = 1
-	scroll.BorderSizePixel = 0
-	scroll.ScrollBarThickness = 8
-	scroll.ScrollingDirection = Enum.ScrollingDirection.Y
-	scroll.ClipsDescendants = true
-	scroll.Parent = parentFrame
-	scroll.Position = UDim2.new(0, 8, 0, 46)
-	scroll.Size = UDim2.new(1, -16, 1, -56)
-
-	for _, child in ipairs(contentFrame:GetChildren()) do
-		if child:IsA("GuiObject") then
-			child.Parent = scroll
-		end
-	end
-	contentFrame:Destroy()
-
-	local function updateCanvas()
-		local maxY = 0
-		for _, child in ipairs(scroll:GetChildren()) do
-			if child:IsA("GuiObject") then
-				local y = child.Position.Y.Offset + child.Size.Y.Offset
-				if y > maxY then maxY = y end
-			end
-		end
-		scroll.CanvasSize = UDim2.new(0, 0, 0, maxY + 8)
-	end
-	updateCanvas()
-
-	local cam = workspace.CurrentCamera
-	if cam then cam:GetPropertyChangedSignal("ViewportSize"):Connect(updateCanvas) end
-	scroll.ChildAdded:Connect(updateCanvas)
-	scroll.ChildRemoved:Connect(updateCanvas)
-
-	return scroll, updateCanvas
-end
-
---==================================================
---=============  CAMERA SAFE MODE  =================
---==================================================
-local camFreezeBusy = false
-local lastCamScriptableAt = 0
-local CAM_WATCHDOG_TIMEOUT = 2.0  -- si Scriptable > 2s => on répare
-
-local function markCameraPossiblyFrozen()
-	lastCamScriptableAt = tick()
-end
-
-local function resetCameraSafe(tag)
-	local cam = workspace.CurrentCamera
-	if not cam then return end
-	local hum = getHumanoid()
-	pcall(function()
-		cam.CameraType = Enum.CameraType.Custom
-		if hum then cam.CameraSubject = hum end
-	end)
-end
-
-local function withFrozenCamera(fn)
-	local cam = workspace.CurrentCamera
-	if not cam then local _=pcall(fn); return end
-	if camFreezeBusy then local _=pcall(fn); return end
-
-	camFreezeBusy = true
-	local origType, origSubject, origCF = cam.CameraType, cam.CameraSubject, cam.CFrame
-	pcall(function()
-		cam.CameraType = Enum.CameraType.Scriptable
-		cam.CFrame = origCF
-	end)
-	markCameraPossiblyFrozen()
-
-	local ok = pcall(fn)
-
-	pcall(function()
-		local subject = (origSubject and origSubject.Parent) and origSubject or getHumanoid()
-		cam.CameraSubject = subject
-	end)
-	pcall(function() cam.CFrame = origCF end)
-	pcall(function()
-		if origType == Enum.CameraType.Scriptable then
-			cam.CameraType = Enum.CameraType.Custom
-		else
-			cam.CameraType = origType
-		end
-	end)
-
-	camFreezeBusy = false
-end
-
--- Watchdog anti-freeze
-task.spawn(function()
-	while true do
-		task.wait(0.5)
-		local cam = workspace.CurrentCamera
-		if cam and cam.CameraType == Enum.CameraType.Scriptable and not camFreezeBusy then
-			if (tick() - lastCamScriptableAt) > CAM_WATCHDOG_TIMEOUT then
-				resetCameraSafe("watchdog")
+	local function refresh()
+		scaleObj.Scale = computeScale()
+		if clampTargets then
+			for _, guiObj in ipairs(clampTargets) do
+				if guiObj and guiObj.Parent then clampOnScreen(guiObj) end
 			end
 		end
 	end
-end)
-
---==================================================
---=============  PLAYER TUNER (LITE)  ==============
---==================================================
-local DEFAULT_GRAVITY, DEFAULT_JUMPPOWER, DEFAULT_WALKSPEED = 196.2, 50, 16
-local currentSpeed, currentGravity, currentJump = math.floor(DEFAULT_WALKSPEED*1.3 + 0.5), 147.1, 60
-local isNoclipping, noclipConnection = false, nil
-
-local function applySpeed(v)   currentSpeed=v;  local h=player.Character and player.Character:FindFirstChildOfClass("Humanoid"); if h then h.WalkSpeed=v end end
-local function applyGravity(v) currentGravity=v; workspace.Gravity=v end
-local function applyJump(v)    currentJump=v;   local h=player.Character and player.Character:FindFirstChildOfClass("Humanoid"); if h then h.JumpPower=v end end
-local function resetDefaults() applySpeed(DEFAULT_WALKSPEED); applyGravity(DEFAULT_GRAVITY); applyJump(DEFAULT_JUMPPOWER); msg("↩️ Reset (16/196.2/50).") end
-
--- Anti-AFK simple (ON par défaut)
-local ANTI_AFK_PERIOD, ANTI_AFK_DURATION = 60, 0.35
-local antiAFKEnabled = true
-player.Idled:Connect(function()
-	pcall(function()
-		VirtualUser:CaptureController()
-		VirtualUser:ClickButton2(Vector2.new(0,0))
-	end)
-end)
-task.spawn(function()
-	while true do
-		task.wait(ANTI_AFK_PERIOD)
-		if antiAFKEnabled then
-			local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-			if hum then
-				hum:Move(Vector3.new(0, 0, -1), true)
-				task.wait(ANTI_AFK_DURATION)
-				hum:Move(Vector3.new(0, 0, 0), true)
-			end
-		end
-	end
-end)
-
---==================================================
---=================  GEAR / REMOTES  ===============
---==================================================
-local GEAR_SHOP_POS = Vector3.new(-288, 2, -15)
-local SELL_NPC_POS  = Vector3.new(87, 3, 0)
-
-local function teleportTo(p)
-	local hrp=getHRP(); if not hrp then msg("❌ HRP introuvable."); return end
-	hrp.CFrame=CFrame.new(p)
+	refresh()
+	if cam then cam:GetPropertyChangedSignal("ViewportSize"):Connect(refresh) end
+	UserInputService:GetPropertyChangedSignal("TouchEnabled"):Connect(refresh)
+	UserInputService:GetPropertyChangedSignal("KeyboardEnabled"):Connect(refresh)
 end
 
+-- =========================================================
+-- =================== Remotes helpers =====================
+-- =========================================================
+local function safeWait(path, timeout)
+	local node=ReplicatedStorage
+	for _,name in ipairs(path) do node=node:WaitForChild(name, timeout or 2) if not node then return nil end end
+	return node
+end
 local function getSellInventoryRemote()  local r=safeWait({"GameEvents","Sell_Inventory"},2)                return (r and r:IsA("RemoteEvent")) and r or nil end
 local function getBuySeedRemote()        local r=safeWait({"GameEvents","BuySeedStock"},2)                  return (r and r:IsA("RemoteEvent")) and r or nil end
 local function getBuyGearRemote()        local r=safeWait({"GameEvents","BuyGearStock"},2)                  return (r and r:IsA("RemoteEvent")) and r or nil end
 local function getBuyPetEggRemote()      local r=safeWait({"GameEvents","BuyPetEgg"},2)                     return (r and r:IsA("RemoteEvent")) and r or nil end
-local function getSubmitChipmunkRemote() local r=safeWait({"GameEvents","SubmitChipmunkFruit"},2)           return (r and r:IsA("RemoteEvent")) and r or nil end
+local function getWitchesSubmitRemote()  local r=safeWait({"GameEvents","WitchesBrew","SubmitItemToCauldron"},2) return (r and r:IsA("RemoteFunction")) and r or nil end
 
--- 🔎 Recherche robuste du joueur "khetameyn"
-local K_NAME = "khetameyn"
-local function lower(s) return string.lower(tostring(s or "")) end
-local function findPlayerByNameInsensitive(target)
-	local t = lower(target)
-	for _,pl in ipairs(Players:GetPlayers()) do
-		if lower(pl.Name) == t or lower(pl.DisplayName or "") == t then
-			return pl
+-- =========================================================
+-- =========== Backpack detector (robuste) =================
+-- =========================================================
+local BackpackCountValue, BackpackCapValue = nil, nil
+local function isValueObject(x) return x and (x:IsA("IntValue") or x:IsA("NumberValue")) end
+local COUNT_NAMES = { "count","current","amount","qty","quantity","items","inventory","backpack","bag","held","stored" }
+local CAP_NAMES   = { "capacity","cap","max","maxcapacity","maxamount","limit","maxitems","maxinventory","maxbackpack" }
+local function nameMatchAny(nm, list)
+	nm = lower(nm)
+	for _, k in ipairs(list) do if nm == k or string.find(nm, k, 1, true) then return true end end
+	return false
+end
+local function tryAutoBindBackpack()
+	BackpackCountValue, BackpackCapValue = nil, nil
+	local roots = { player, player:FindFirstChild("PlayerGui"), player:FindFirstChild("PlayerScripts"), ReplicatedStorage, Workspace }
+	local bestParent, bestScore = nil, -1
+	local candidateMap = {}
+	for _, root in ipairs(roots) do
+		if root then
+			for _, v in ipairs(root:GetDescendants()) do
+				if isValueObject(v) then
+					local par = v.Parent or root
+					candidateMap[par] = candidateMap[par] or {count=nil, cap=nil}
+					if nameMatchAny(v.Name, COUNT_NAMES) and not candidateMap[par].count then
+						candidateMap[par].count = v
+					elseif nameMatchAny(v.Name, CAP_NAMES) and not candidateMap[par].cap then
+						candidateMap[par].cap = v
+					end
+				end
+			end
 		end
 	end
-	return nil
+	for par, pair in pairs(candidateMap) do
+		local c, m = pair.count, pair.cap
+		if isValueObject(c) and isValueObject(m) then
+			local cv = tonumber(c.Value) or -1
+			local mv = tonumber(m.Value) or -1
+			if cv >= 0 and mv > 0 and cv <= mv and mv <= 1000000 then
+				local score = (nameMatchAny(c.Name, {"backpack","inventory","bag"}) and 5 or 0)
+				+ (nameMatchAny(m.Name, {"capacity","max"}) and 5 or 0)
+				+ math.max(0, mv - cv)
+				if score > bestScore then bestScore = score; bestParent = par end
+			end
+		end
+	end
+	if bestParent then
+		BackpackCountValue = candidateMap[bestParent].count
+		BackpackCapValue   = candidateMap[bestParent].cap
+		return true
+	end
+	return false
 end
-local function tpToKhetameyn(yOffset)
-	yOffset = yOffset or 3
-	local target = findPlayerByNameInsensitive(K_NAME)
-	if not target then msg("❌ Joueur 'khetameyn' introuvable."); return false end
-	local char = target.Character or target.CharacterAdded:Wait()
-	if not char then msg("❌ Personnage de 'khetameyn' indisponible."); return false end
-	local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
-	local meRoot = getHRP()
-	if not (root and meRoot) then msg("❌ Position HRP manquante (toi ou lui)."); return false end
-	local cf = root.CFrame + Vector3.new(0, yOffset, 0)
-	withFrozenCamera(function()
-		meRoot.CFrame = cf
-	end)
-	return true
+local function isBackpackFull()
+	if not (BackpackCountValue and BackpackCapValue) then tryAutoBindBackpack() end
+	local c = BackpackCountValue and tonumber(BackpackCountValue.Value) or nil
+	local m = BackpackCapValue   and tonumber(BackpackCapValue.Value)   or nil
+	if c and m then return (c >= m), c, m end
+	return false, c, m
 end
 
-local SEED_TIER = "Tier 1"
-local SEEDS = { "Carrot","Strawberry","Blueberry","Orange Tulip","Tomato","Corn","Daffodil","Watermelon","Pumpkin","Apple","Bamboo","Coconut","Cactus","Dragon Fruit","Mango","Grape","Mushroom","Pepper","Cacao","Beanstalk","Ember Lily","Sugar Apple","Burning Bud","Giant Pinecone","Elder Strawberry","Romanesco","Crimson Thorn" }
-local GEARS = { "Watering Can","Trading Ticket","Trowel","Recall Wrench","Basic Sprinkler","Advanced Sprinkler","Medium Toy","Medium Treat","Godly Sprinkler","Magnifying Glass","Master Sprinkler","Cleaning Spray","Cleansing Pet Shard","Favorite Tool","Harvest Tool","Friendship Pot","Grandmaster Sprinkler","Level Up Lollipop" }
-local EGGS  = { "Common Egg","Uncommon Egg","Rare Egg","Legendary Egg","Mythical Egg","Bug Egg","Jungle Egg" }
+-- =========================================================
+-- =========== ⌘/Ctrl + Clic → Teleport (no-freeze) ========
+-- =========================================================
+local function BindMetaCtrlClickTeleport(opts)
+	opts = opts or {}
+	local instant  = opts.instant == true
+	local tpSpeed  = opts.tpSpeed or 120
+	local yOffset  = opts.yOffset or 3
+
+	local function hardSetPosition(pos)
+		local hrp = getHRP(); if not hrp then return end
+		pcall(function() hrp.AssemblyLinearVelocity = Vector3.new(); hrp.AssemblyAngularVelocity = Vector3.new() end)
+		local ch = player.Character
+		if ch and typeof(ch.PivotTo)=="function" then ch:PivotTo(CFrame.new(pos)) else hrp.CFrame = CFrame.new(pos) end
+	end
+	local function teleportTween(pos)
+		local hrp = getHRP(); if not hrp then return end
+		if instant then hardSetPosition(pos) return end
+		local d = (pos - hrp.Position).Magnitude
+		local t = math.max(d / tpSpeed, 0.05)
+		TweenService:Create(hrp, TweenInfo.new(t, Enum.EasingStyle.Linear), {CFrame = CFrame.new(pos)}):Play()
+	end
+	local function metaOrCtrlDown()
+		return UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
+			or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
+			or UserInputService:IsKeyDown(Enum.KeyCode.LeftMeta)
+			or UserInputService:IsKeyDown(Enum.KeyCode.RightMeta)
+	end
+	local mouse = player:GetMouse()
+	return mouse.Button1Down:Connect(function()
+		if not metaOrCtrlDown() then return end
+		local hit = mouse.Hit
+		if hit then teleportTween(hit.Position + Vector3.new(0, yOffset, 0)) end
+	end)
+end
+local _clickTPConn = BindMetaCtrlClickTeleport({ instant=false, tpSpeed=120, yOffset=3 })
+
+-- =========================================================
+-- ================== Auto-buy workers =====================
+-- =========================================================
 local MAX_TRIES_PER_SEED, MAX_TRIES_PER_GEAR = 20, 5
 
 local function buyAllSeedsWorker()
-	local r = getBuySeedRemote(); if not r then msg("❌ BuySeedStock introuvable."); return end
+	local r = getBuySeedRemote(); if not r then msg("❌ BuySeedStock introuvable.", Color3.fromRGB(255,120,120)); return end
+	msg("🌱 Achat: toutes les graines…")
 	for _, seed in ipairs(SEEDS) do
-		for _=1,MAX_TRIES_PER_SEED do pcall(function() r:FireServer(SEED_TIER, seed) end) task.wait(0.05) end
+		local tier = (seed == "Great Pumpkin") and "Shop" or SEED_TIER
+		for i=1,MAX_TRIES_PER_SEED do pcall(function() r:FireServer(tier, seed) end) task.wait(0.05) end
+		msg("✅ "..seed.." ok.", Color3.fromRGB(160,230,180)); task.wait(0.03)
 	end
+	msg("🎉 Seeds terminé.")
 end
 local function buyAllGearWorker()
-	local r = getBuyGearRemote(); if not r then msg("❌ BuyGearStock introuvable."); return end
+	local r = getBuyGearRemote(); if not r then msg("❌ BuyGearStock introuvable.", Color3.fromRGB(255,120,120)); return end
+	msg("🧰 Achat: tous les gears…")
 	for _, g in ipairs(GEARS) do
-		for _=1,MAX_TRIES_PER_GEAR do pcall(function() r:FireServer(g) end) task.wait(0.06) end
+		for i=1,MAX_TRIES_PER_GEAR do pcall(function() r:FireServer(g) end) task.wait(0.06) end
+		msg("✅ "..g.." ok.", Color3.fromRGB(180,220,200)); task.wait(0.03)
 	end
+	msg("🎉 Gears terminé.")
 end
 local function buyAllEggsWorker()
-	local r = getBuyPetEggRemote(); if not r then msg("❌ BuyPetEgg introuvable."); return end
-	for _, egg in ipairs(EGGS) do pcall(function() r:FireServer(egg) end); task.wait(0.06) end
-end
-local function submitAllChipmunk() local r = getSubmitChipmunkRemote(); if r then pcall(function() r:FireServer("All") end) end end
-
--- 🍭 BUY 50x LOLLIPOP
-local function buyLollipop50()
-	local r = getBuyGearRemote(); if not r then msg("❌ BuyGearStock introuvable."); return end
-	for i=1,50 do
-		local ok = pcall(function() r:FireServer("Level Up Lollipop") end)
-		if not ok then pcall(function() r:FireServer("Levelup Lollipop") end) end
+	local r = getBuyPetEggRemote(); if not r then msg("❌ BuyPetEgg introuvable.", Color3.fromRGB(255,120,120)); return end
+	msg("🥚 Achat: eggs…")
+	for _, egg in ipairs(EGGS) do
+		local ok, err = pcall(function() r:FireServer(egg) end)
+		if ok then msg("✅ "..egg.." ok.", Color3.fromRGB(200,240,200)) else msg(("⚠️ %s échec: %s"):format(egg, tostring(err)), Color3.fromRGB(255,180,120)) end
 		task.wait(0.06)
 	end
+	msg("🎉 Eggs terminé.")
 end
 
---==================================================
---=================  MAIN UI  ======================
---==================================================
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "SaadLite"
-screenGui.ResetOnSpawn = false
-screenGui.IgnoreGuiInset = false
-screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-screenGui.DisplayOrder = 10
-screenGui.Parent = playerGui
-local scaleMain = ensureUIScale(screenGui)
+-- Lollipop x50
+local function buyLollipop50()
+	local r = getBuyGearRemote(); if not r then msg("❌ BuyGearStock introuvable.", Color3.fromRGB(255,120,120)); return end
+	msg("🍭 Achat: Level Up Lollipop x50 …")
+	for i=1,50 do
+		pcall(function() r:FireServer("Level Up Lollipop") end)
+		pcall(function() r:FireServer("Levelup Lollipop") end)
+		task.wait(0.06)
+	end
+	msg("✅ Lollipop x50 terminé.")
+end
 
+-- =========================================================
+-- ================== Timers auto-buy ON ===================
+-- =========================================================
+local function updateTimerLabels()
+	if seedsTimerLabel then seedsTimerLabel.Text = "⏳ Next: "..fmtTime(seedsTimer) end
+	if gearTimerLabel  then gearTimerLabel.Text  = "⏳ Next: "..fmtTime(gearTimer)  end
+	if eggsTimerLabel  then eggsTimerLabel.Text  = "⏳ Next: "..fmtTime(eggsTimer)  end
+end
+task.spawn(function()
+	-- Exécution immédiate au lancement (puis toutes les 60s)
+	task.defer(function()
+		if autoBuySeeds then task.spawn(buyAllSeedsWorker) end
+		if autoBuyGear  then task.spawn(buyAllGearWorker)  end
+		if autoBuyEggs  then task.spawn(buyAllEggsWorker)  end
+	end)
+	while true do
+		task.wait(1)
+		if autoBuySeeds then seedsTimer -= 1 else seedsTimer = AUTO_PERIOD end
+		if autoBuyGear  then gearTimer  -= 1 else gearTimer  = AUTO_PERIOD end
+		if autoBuyEggs  then eggsTimer  -= 1 else eggsTimer  = AUTO_PERIOD end
+		if autoBuySeeds and seedsTimer<=0 then buyAllSeedsWorker(); seedsTimer=AUTO_PERIOD end
+		if autoBuyGear  and gearTimer<=0  then buyAllGearWorker();  gearTimer =AUTO_PERIOD end
+		if autoBuyEggs  and eggsTimer<=0  then buyAllEggsWorker();  eggsTimer =AUTO_PERIOD end
+		updateTimerLabels()
+	end
+end)
+
+-- =========================================================
+-- ====================== UI Helper ========================
+-- =========================================================
 local function makeDraggable(frame, handle)
-	frame.Active=true; frame.Selectable=true; handle.Active=true; handle.Selectable=true
-	local dragging=false; local dragStart; local startPos; local dragInputId
+	frame.Active = true; frame.Selectable = true
+	handle.Active = true; handle.Selectable = true
+	local dragging = false
+	local dragStart, startPos, dragInputId
 	local function update(input)
-		local delta=input.Position - dragStart
+		local delta = input.Position - dragStart
 		frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
 	end
 	local function begin(input)
-		dragging=true; dragStart=input.Position; startPos=frame.Position; dragInputId=input
-		input.Changed:Connect(function() if input.UserInputState==Enum.UserInputState.End then dragging=false; clampOnScreen(frame) end end)
+		dragging = true
+		dragStart = input.Position
+		startPos = frame.Position
+		dragInputId = input
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				dragging = false
+				clampOnScreen(frame)
+			end
+		end)
 	end
 	handle.InputBegan:Connect(function(i)
-		if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then begin(i) end
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+			begin(i)
+		end
 	end)
 	handle.InputChanged:Connect(function(i)
-		if i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch then if dragging then update(i) end end
+		if i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch then
+			if dragging then update(i) end
+		end
 	end)
 	UserInputService.InputChanged:Connect(function(i)
-		if dragging and (i == dragInputId or i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then update(i) end
+		if dragging and (i == dragInputId or i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+			update(i)
+		end
 	end)
 end
+local function rounded(obj, r) local ui = Instance.new("UICorner"); ui.CornerRadius = UDim.new(0, r or 8); ui.Parent = obj; return ui end
+local function tween(obj, props, t, style, dir)
+	local info = TweenInfo.new(t or 0.18, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out)
+	return TweenService:Create(obj, info, props)
+end
 
--- Player Tuner panel (responsive) + minimize
-local main = makeFrame(screenGui, UDim2.fromOffset(300, 260), UDim2.fromOffset(20, 20), Color3.fromRGB(36,36,36))
-local title = makeFrame(main, UDim2.new(1,0,0,32), UDim2.fromOffset(0,0), Color3.fromRGB(28,28,28))
-makeLabel(title, "🎚️ PLAYER TUNER (LITE)", UDim2.new(1,-120,1,0), UDim2.new(0,10,0,0), Color3.fromRGB(255,255,255), true)
-local closeBtn    = makeButton(title, "✕", UDim2.fromOffset(26,26), UDim2.new(1,-34,0,3), Color3.fromRGB(255,72,72))
-local minimizeBtn = makeButton(title, "—", UDim2.fromOffset(26,26), UDim2.new(1,-66,0,3), Color3.fromRGB(110,110,110))
+-- =========================================================
+-- ===================== PLAYER TUNER ======================
+-- =========================================================
+screenGui = Instance.new("ScreenGui")
+screenGui.Name = "PlayerTuner"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = false
+screenGui.Parent = playerGui
 
-local content = makeFrame(main, UDim2.new(1,-20,1,-42), UDim2.new(0,10,0,38), Color3.fromRGB(36,36,36)); content.BackgroundTransparency=1
-makeDraggable(main, title)
-local setMainMin = attachMinimize(main, content, minimizeBtn, main.Size, 32)
-local applyMainResp = makeResponsive(main, {anchor="leftTop", w_pct=0.34, h_pct=0.36, minW=260, minH=220, maxW=520, maxH=420, offset={x=10,y=10}})
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.fromOffset(320, 360)
+mainFrame.Position = UDim2.fromScale(0.02, 0.04)
+mainFrame.BackgroundColor3 = Color3.fromRGB(36,36,36)
+mainFrame.BorderSizePixel = 0
+mainFrame.Parent = screenGui
+rounded(mainFrame, 10)
 
--- sliders simplifiés
-local function simpleSlider(y, labelText, minValue, maxValue, step, initialValue, onChange)
-	local frame = makeFrame(content, UDim2.new(1,0,0,52), UDim2.new(0,0,0,y), Color3.fromRGB(36,36,36)); frame.BackgroundTransparency=1
-	local label = makeLabel(frame, labelText, UDim2.new(1,-90,0,18), UDim2.new(0,0,0,0), Color3.fromRGB(255,255,255), true)
-	local value = makeLabel(frame, "", UDim2.new(0,80,0,18), UDim2.new(1,-80,0,0), Color3.fromRGB(180,220,255), false); value.TextXAlignment=Enum.TextXAlignment.Right
-	local track = makeFrame(frame, UDim2.new(1,0,0,10), UDim2.new(0,0,0,26), Color3.fromRGB(64,64,64)); rounded(track,6)
-	local fill  = makeFrame(track, UDim2.new(0,0,1,0), UDim2.new(0,0,0,0), Color3.fromRGB(0,170,255)); rounded(fill,6)
-	local knob  = makeFrame(track, UDim2.fromOffset(16,16), UDim2.new(0,0,0.5,-8), Color3.fromRGB(230,230,230)); rounded(knob,16)
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, 36)
+titleBar.BackgroundColor3 = Color3.fromRGB(28,28,28)
+titleBar.Parent = mainFrame
+rounded(titleBar, 10)
 
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -110, 1, 0)
+title.Position = UDim2.new(0, 10, 0, 0)
+title.BackgroundTransparency = 1
+title.TextColor3 = Color3.fromRGB(255,255,255)
+title.Text = "🎚️ PLAYER TUNER"
+title.Font = Enum.Font.GothamBold
+title.TextSize = 16
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = titleBar
+
+local closeButton = Instance.new("TextButton")
+closeButton.Size = UDim2.fromOffset(26, 26)
+closeButton.Position = UDim2.new(1, -34, 0, 5)
+closeButton.BackgroundColor3 = Color3.fromRGB(255,72,72)
+closeButton.TextColor3 = Color3.fromRGB(255,255,255)
+closeButton.Text = "✕"
+closeButton.Font = Enum.Font.GothamBold
+closeButton.TextSize = 14
+closeButton.Parent = titleBar
+rounded(closeButton, 0)
+
+local isMinimized = false
+local fullSize = UDim2.fromOffset(320, 360)
+local collapsedSize = UDim2.fromOffset(320, 36)
+local minimizeButton = Instance.new("TextButton")
+minimizeButton.Size = UDim2.fromOffset(26, 26)
+minimizeButton.Position = UDim2.new(1, -66, 0, 5)
+minimizeButton.BackgroundColor3 = Color3.fromRGB(110, 110, 110)
+minimizeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+minimizeButton.Text = "—"
+minimizeButton.Font = Enum.Font.GothamBold
+minimizeButton.TextSize = 14
+minimizeButton.Parent = titleBar
+rounded(minimizeButton, 0)
+
+local content = Instance.new("Frame")
+content.Size = UDim2.new(1, -20, 1, -46)
+content.Position = UDim2.new(0, 10, 0, 40)
+content.BackgroundTransparency = 1
+content.Parent = mainFrame
+
+makeDraggable(mainFrame, titleBar)
+
+local function setMinimized(v)
+	if v == isMinimized then return end
+	isMinimized = v
+	minimizeButton.Text = v and "▣" or "—"
+	if v then
+		for _, d in ipairs(content:GetDescendants()) do
+			pcall(function()
+				if d:IsA("TextLabel") or d:IsA("TextButton") then tween(d, {TextTransparency = 1}, 0.12):Play() end
+				if d:IsA("ImageLabel") or d:IsA("ImageButton") then tween(d, {ImageTransparency = 1}, 0.12):Play() end
+				if d:IsA("Frame") then tween(d, {BackgroundTransparency = 1}, 0.12):Play() end
+			end)
+		end
+		tween(mainFrame, {Size = collapsedSize}, 0.2):Play()
+		task.delay(0.2, function() content.Visible = false end)
+	else
+		content.Visible = true
+		tween(mainFrame, {Size = fullSize}, 0.2):Play()
+		task.delay(0.05, function()
+			for _, d in ipairs(content:GetDescendants()) do
+				pcall(function()
+					if d:IsA("TextLabel") or d:IsA("TextButton") then tween(d, {TextTransparency = 0}, 0.15):Play() end
+					if d:IsA("ImageLabel") or d:IsA("ImageButton") then tween(d, {ImageTransparency = 0}, 0.15):Play() end
+					if d:IsA("Frame") then tween(d, {BackgroundTransparency = 0}, 0.15):Play() end
+				end)
+			end
+		end)
+	end
+end
+minimizeButton.MouseButton1Click:Connect(function() setMinimized(not isMinimized) end)
+UserInputService.InputBegan:Connect(function(input, gp)
+	if gp then return end
+	if input.KeyCode == Enum.KeyCode.M and (UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt) or UserInputService:IsKeyDown(Enum.KeyCode.RightAlt)) then
+		setMinimized(not isMinimized)
+	end
+end)
+
+-- Sliders
+local function createSlider(parent, y, labelText, minValue, maxValue, step, initialValue, onChange, decimals)
+	local frame = Instance.new("Frame"); frame.Size = UDim2.new(1, 0, 0, 60); frame.Position = UDim2.new(0, 0, 0, y); frame.BackgroundTransparency = 1; frame.Parent = parent
+	local label = Instance.new("TextLabel"); label.Size = UDim2.new(1, 0, 0, 18); label.BackgroundTransparency = 1; label.TextXAlignment = Enum.TextXAlignment.Left; label.TextColor3 = Color3.fromRGB(255,255,255); label.Font = Enum.Font.GothamBold; label.TextSize = 14; label.Text = labelText; label.Parent = frame
+	local valueLabel = Instance.new("TextLabel"); valueLabel.Size = UDim2.new(0, 90, 0, 18); valueLabel.Position = UDim2.new(1, -90, 0, 0); valueLabel.BackgroundTransparency = 1; valueLabel.TextXAlignment = Enum.TextXAlignment.Right; valueLabel.TextColor3 = Color3.fromRGB(200,220,255); valueLabel.Font = Enum.Font.Gotham; valueLabel.TextSize = 12; valueLabel.Parent = frame
+	local track = Instance.new("Frame"); track.Size = UDim2.new(1, 0, 0, 10); track.Position = UDim2.new(0, 0, 0, 26); track.BackgroundColor3 = Color3.fromRGB(64,64,64); track.BorderSizePixel = 0; track.Parent = frame; rounded(track,6)
+	local fill = Instance.new("Frame"); fill.Size = UDim2.new(0, 0, 1, 0); fill.BackgroundColor3 = Color3.fromRGB(0,170,255); fill.BorderSizePixel = 0; fill.Parent = track; rounded(fill,6)
+	local knob = Instance.new("Frame"); knob.Size = UDim2.fromOffset(16, 16); knob.AnchorPoint = Vector2.new(0.5,0.5); knob.Position = UDim2.new(0, 0, 0.5, 0); knob.BackgroundColor3 = Color3.fromRGB(230,230,230); knob.BorderSizePixel = 0; knob.Parent = track; rounded(knob,16)
 	local function clamp(v,a,b) return math.max(a, math.min(b, v)) end
 	local function snap(v) return math.floor((v - minValue)/step + 0.5)*step + minValue end
-	local function setVisual(pct, val) fill.Size=UDim2.new(pct,0,1,0); knob.Position=UDim2.new(pct,-8,0.5,-8); value.Text=tostring(math.floor(val*10+0.5)/10) end
-	local function setValue(val, fire) val=clamp(snap(val),minValue,maxValue); local pct=(val-minValue)/(maxValue-minValue); setVisual(pct,val); if fire then onChange(val) end end
-
-	local dragging=false
-	local function updateFromX(x) local ap,as=track.AbsolutePosition.X, track.AbsoluteSize.X; if as<=0 then return end; local pct = math.clamp((x-ap)/as,0,1); local v=minValue+pct*(maxValue-minValue); setValue(v,true) end
+	local function fmt(val) if decimals and decimals > 0 then return string.format("%."..tostring(decimals).."f", val) else return tostring(math.floor(val + 0.5)) end end
+	local function setVisual(pct, val) fill.Size = UDim2.new(pct, 0, 1, 0); knob.Position = UDim2.new(pct, 0, 0.5, 0); valueLabel.Text = fmt(val) end
+	local function setValue(val, fire) val = clamp(snap(val), minValue, maxValue); local pct = (val - minValue) / (maxValue - minValue); setVisual(pct, val); if fire and onChange then onChange(val) end end
+	local dragging = false
+	local function updateFromX(x) local ap,as = track.AbsolutePosition.X, track.AbsoluteSize.X; if as<=0 then return end; local pct = math.max(0, math.min(1, (x-ap)/as)); local val = minValue + pct*(maxValue-minValue); setValue(val, true) end
 	track.InputBegan:Connect(function(i)
 		if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
 			dragging=true; updateFromX(i.Position.X)
-			i.Changed:Connect(function() if i.UserInputState==Enum.UserInputState.End then dragging=false; clampOnScreen(main) end end)
+			i.Changed:Connect(function() if i.UserInputState==Enum.UserInputState.End then dragging=false; clampOnScreen(mainFrame) end end)
 		end
 	end)
 	knob.InputBegan:Connect(function(i)
 		if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
 			dragging=true; updateFromX(i.Position.X)
-			i.Changed:Connect(function() if i.UserInputState==Enum.UserInputState.End then dragging=false; clampOnScreen(main) end end)
+			i.Changed:Connect(function() if i.UserInputState==Enum.UserInputState.End then dragging=false; clampOnScreen(mainFrame) end end)
 		end
 	end)
 	UserInputService.InputChanged:Connect(function(i)
@@ -496,29 +505,54 @@ local function simpleSlider(y, labelText, minValue, maxValue, step, initialValue
 			updateFromX(i.Position.X)
 		end
 	end)
-	setValue(initialValue,true)
-	return { set=function(v) setValue(v,true) end }
+	setValue(initialValue, true)
+	return { set = function(v) setValue(v, true) end }
 end
 
-local speedSlider   = simpleSlider(0,   "Walk Speed (16–58)",   16, 58,   1,   math.floor(DEFAULT_WALKSPEED*1.3 + 0.5), function(v) applySpeed(v) end)
-local gravitySlider = simpleSlider(58,  "Gravity (37.5–196.2)", 37.5,196.2, 0.5, 147.1, function(v) applyGravity(v) end)
-local jumpSlider    = simpleSlider(116, "Jump Power (45–82.5)", 45, 82.5, 0.5, 60, function(v) applyJump(v) end)
+local speedSlider   = createSlider(content, 0,   "Walk Speed (16–58)",   16, 58,   1,   currentSpeed,   applySpeed,   0)
+local gravitySlider = createSlider(content, 70,  "Gravity (37.5–196.2)", 37.5,196.2, 0.1, currentGravity, applyGravity, 1)
+local jumpSlider    = createSlider(content, 140, "Jump Power (45–82.5)", 45, 82.5, 0.5, currentJump,    applyJump,    1)
 
-local rowBtn   = makeFrame(content, UDim2.new(1,0,0,36), UDim2.new(0,0,0,174), Color3.fromRGB(36,36,36)); rowBtn.BackgroundTransparency=1
-local resetBtn = makeButton(rowBtn, "↩️ Reset",              UDim2.new(0.25,-6,1,0), UDim2.new(0,0,0,0),    Color3.fromRGB(70,100,180))
-local noclipBtn= makeButton(rowBtn, "🚫 NO CLIP: OFF",        UDim2.new(0.25,-6,1,0), UDim2.new(0.25,6,0,0), Color3.fromRGB(220,60,60))
-local tpKBtn   = makeButton(rowBtn, "🧭 TP → khetameyn",     UDim2.new(0.25,-6,1,0), UDim2.new(0.50,6,0,0), Color3.fromRGB(90,120,200))
-local gearBtn  = makeButton(rowBtn, "🛒 Gear Panel",         UDim2.new(0.25,0,1,0),  UDim2.new(0.75,6,0,0), Color3.fromRGB(60,180,60))
+-- Row 1 Buttons
+local buttonsRow = Instance.new("Frame"); buttonsRow.Size = UDim2.new(1, 0, 0, 36); buttonsRow.Position = UDim2.new(0, 0, 0, 200); buttonsRow.BackgroundTransparency = 1; buttonsRow.Parent = content
+local resetBtn = Instance.new("TextButton")
+resetBtn.Size = UDim2.new(0.33, -6, 1, 0); resetBtn.Position = UDim2.new(0, 0, 0, 0)
+resetBtn.BackgroundColor3 = Color3.fromRGB(70,100,180); resetBtn.TextColor3 = Color3.fromRGB(255,255,255)
+resetBtn.Text = "↩️ Reset Defaults"; resetBtn.Font = Enum.Font.GothamBold; resetBtn.TextSize = 13; resetBtn.Parent = buttonsRow; rounded(resetBtn,8)
+local noclipBtn = Instance.new("TextButton")
+noclipBtn.Size = UDim2.new(0.33, -6, 1, 0); noclipBtn.Position = UDim2.new(0.335, 6, 0, 0)
+noclipBtn.BackgroundColor3 = Color3.fromRGB(220, 60, 60); noclipBtn.TextColor3 = Color3.fromRGB(255,255,255)
+noclipBtn.Text = "🚫 NO CLIP: OFF"; noclipBtn.Font = Enum.Font.GothamBold; noclipBtn.TextSize = 13; noclipBtn.Parent = buttonsRow; rounded(noclipBtn,8)
+local toggleGearBtn = Instance.new("TextButton")
+toggleGearBtn.Size = UDim2.new(0.33, 0, 1, 0); toggleGearBtn.Position = UDim2.new(0.67, 6, 0, 0)
+toggleGearBtn.BackgroundColor3 = Color3.fromRGB(60, 180, 60); toggleGearBtn.TextColor3 = Color3.fromRGB(255,255,255)
+toggleGearBtn.Text = "🛒 Toggle Gear Panel"; toggleGearBtn.Font = Enum.Font.GothamBold; toggleGearBtn.TextSize = 13; toggleGearBtn.Parent = buttonsRow; rounded(toggleGearBtn,8)
 
-local antiRow    = makeFrame(content, UDim2.new(1,0,0,36), UDim2.new(0,0,0,212), Color3.fromRGB(36,36,36)); antiRow.BackgroundTransparency=1
-local antiAFKBtn = makeButton(antiRow, "🛡️ Anti-AFK: ON",    UDim2.new(0.6,-6,1,0), UDim2.new(0,0,0,0),     Color3.fromRGB(80,140,90))
-local openAcorn  = makeButton(antiRow, "🌰 ACORN COLLECTOR", UDim2.new(0.4,0,1,0),  UDim2.new(0.6,6,0,0),   Color3.fromRGB(200,160,60))
+-- Row 2: Anti-AFK + Open Mini Panel
+local miscRow = Instance.new("Frame"); miscRow.Size = UDim2.new(1, 0, 0, 36); miscRow.Position = UDim2.new(0, 0, 0, 236); miscRow.BackgroundTransparency = 1; miscRow.Parent = content
+local antiAFKBtn = Instance.new("TextButton")
+antiAFKBtn.Size = UDim2.new(0.48, -4, 1, 0); antiAFKBtn.Position = UDim2.new(0, 0, 0, 0)
+antiAFKBtn.BackgroundColor3 = Color3.fromRGB(100, 130, 100); antiAFKBtn.TextColor3 = Color3.fromRGB(255,255,255)
+antiAFKBtn.Text = "🛡️ Anti-AFK: OFF"; antiAFKBtn.Font = Enum.Font.GothamBold; antiAFKBtn.TextSize = 13; antiAFKBtn.Parent = miscRow; rounded(antiAFKBtn,8)
+local openMiniBtn = Instance.new("TextButton")
+openMiniBtn.Size = UDim2.new(0.52, 0, 1, 0); openMiniBtn.Position = UDim2.new(0.48, 4, 0, 0)
+openMiniBtn.BackgroundColor3 = Color3.fromRGB(140, 110, 200); openMiniBtn.TextColor3 = Color3.fromRGB(255,255,255)
+openMiniBtn.Text = "⚙️ Open Saad Mini Panel"; openMiniBtn.Font = Enum.Font.GothamBold; openMiniBtn.TextSize = 13; openMiniBtn.Parent = miscRow; rounded(openMiniBtn,8)
+
+-- Row 3: Hint
+local hintRow = Instance.new("TextLabel")
+hintRow.Size = UDim2.new(1, 0, 0, 22); hintRow.Position = UDim2.new(0, 0, 0, 272)
+hintRow.BackgroundTransparency = 1; hintRow.TextXAlignment = Enum.TextXAlignment.Left
+hintRow.Font = Enum.Font.Gotham; hintRow.TextSize = 12; hintRow.TextColor3 = Color3.fromRGB(200,220,255)
+hintRow.Text = "⌘/Ctrl + clic = TP • H: Harvest v2.4  •  J: Harvest v4 (hybride)"
+hintRow.Parent = content
 
 resetBtn.MouseButton1Click:Connect(function()
 	resetDefaults()
-	speedSlider.set(DEFAULT_WALKSPEED); gravitySlider.set(DEFAULT_GRAVITY); jumpSlider.set(DEFAULT_JUMPPOWER)
+	speedSlider.set(DEFAULT_WALKSPEED)
+	gravitySlider.set(DEFAULT_GRAVITY)
+	jumpSlider.set(DEFAULT_JUMPPOWER)
 end)
-
 noclipBtn.MouseButton1Click:Connect(function()
 	isNoclipping = not isNoclipping
 	if isNoclipping then
@@ -528,560 +562,790 @@ noclipBtn.MouseButton1Click:Connect(function()
 			local ch=player.Character; if not ch then return end
 			for _,p in ipairs(ch:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide=false end end
 		end)
+		msg("🚫 NO CLIP activé.")
 	else
 		noclipBtn.BackgroundColor3=Color3.fromRGB(220,60,60); noclipBtn.Text="🚫 NO CLIP: OFF"
 		if noclipConnection then noclipConnection:Disconnect(); noclipConnection=nil end
 		local ch=player.Character; if ch then for _,p in ipairs(ch:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide=true end end end
+		msg("✅ NO CLIP désactivé.")
 	end
 end)
-
-closeBtn.MouseButton1Click:Connect(function()
-	if isNoclipping then isNoclipping=false; if noclipConnection then noclipConnection:Disconnect(); end end
+closeButton.MouseButton1Click:Connect(function()
+	if isNoclipping then if noclipConnection then noclipConnection:Disconnect(); noclipConnection=nil end end
+	if gearGui then gearGui:Destroy() end
 	if screenGui then screenGui:Destroy() end
 end)
 
--- 🧭 Bouton TP → khetameyn
-tpKBtn.MouseButton1Click:Connect(function()
-	local ok = tpToKhetameyn(3)
-	if not ok then
-		tpKBtn.BackgroundColor3 = Color3.fromRGB(200,70,70)
-		task.delay(0.9, function() tpKBtn.BackgroundColor3 = Color3.fromRGB(90,120,200) end)
-	else
-		tpKBtn.BackgroundColor3 = Color3.fromRGB(70,180,90)
-		task.delay(0.6, function() tpKBtn.BackgroundColor3 = Color3.fromRGB(90,120,200) end)
-	end
-end)
+-- ================= GEAR UI =================
+gearGui = Instance.new("ScreenGui")
+gearGui.Name = "GearPanel"
+gearGui.ResetOnSpawn = false
+gearGui.IgnoreGuiInset = false
+gearGui.Parent = playerGui
 
---==================================================
---=================  GEAR PANEL  ===================
---==================================================
-local gearGui = Instance.new("ScreenGui"); gearGui.Name="GearPanelLite"; gearGui.ResetOnSpawn=false; gearGui.IgnoreGuiInset=false
-gearGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-gearGui.DisplayOrder = 20
-gearGui.Parent=playerGui
-local scaleGear = ensureUIScale(gearGui)
+gearFrame = Instance.new("Frame")
+gearFrame.Size = UDim2.fromOffset(280, 520)
+gearFrame.Position = UDim2.fromScale(0.26, 0.04)
+gearFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 80)
+gearFrame.BorderSizePixel = 0
+gearFrame.Parent = gearGui
+rounded(gearFrame,10)
 
-local gearFrame = makeFrame(gearGui, UDim2.fromOffset(250, 280), UDim2.fromOffset(0,0), Color3.fromRGB(50,50,80))
-local gtitle = makeFrame(gearFrame, UDim2.new(1,0,0,28), UDim2.new(0,0,0,0), Color3.fromRGB(40,40,70))
-makeLabel(gtitle, "🛒 GEAR SHOP (L)", UDim2.new(1,-70,1,0), UDim2.new(0,10,0,0), Color3.fromRGB(255,255,255), true)
-local gclose = makeButton(gtitle, "✕", UDim2.fromOffset(20,20), UDim2.new(1,-26,0,4), Color3.fromRGB(255,72,72))
-local gmin   = makeButton(gtitle, "—", UDim2.fromOffset(20,20), UDim2.new(1,-50,0,4), Color3.fromRGB(110,110,110))
-local gbody  = makeFrame(gearFrame, UDim2.new(1,-12,1,-38), UDim2.new(0,6,0,34), Color3.fromRGB(50,50,80)); gbody.BackgroundTransparency=1
-makeDraggable(gearFrame, gtitle)
-attachMinimize(gearFrame, gbody, gmin, gearFrame.Size, 28)
+local gearTitleBar = Instance.new("Frame")
+gearTitleBar.Size = UDim2.new(1, 0, 0, 28)
+gearTitleBar.BackgroundColor3 = Color3.fromRGB(40, 40, 70)
+gearTitleBar.Parent = gearFrame
+rounded(gearTitleBar,10)
 
-local applyGearResp = makeResponsive(gearFrame, {anchor="topCenter", w_pct=0.30, h_pct=0.42, minW=240, minH=220, maxW=520, maxH=520, offset={x=10,y=10}})
+local gearTitle = Instance.new("TextLabel")
+gearTitle.Size = UDim2.new(1, -40, 1, 0)
+gearTitle.Position = UDim2.new(0, 10, 0, 0)
+gearTitle.BackgroundTransparency = 1
+gearTitle.TextColor3 = Color3.fromRGB(255,255,255)
+gearTitle.Text = "🛒 GEAR SHOP"
+gearTitle.Font = Enum.Font.GothamBold
+gearTitle.TextSize = 13
+gearTitle.TextXAlignment = Enum.TextXAlignment.Left
+gearTitle.Parent = gearTitleBar
 
-local tpGear  = makeButton(gbody, "📍 TP GEAR SHOP",      UDim2.new(1,0,0,28), UDim2.new(0,0,0,0),   Color3.fromRGB(60,180,60))
-local sellBtn = makeButton(gbody, "🧺 SELL INVENTORY",    UDim2.new(1,0,0,28), UDim2.new(0,0,0,32),  Color3.fromRGB(200,130,90))
-local chipBtn = makeButton(gbody, "🍁 SUBMIT ALL (Chip)", UDim2.new(1,0,0,28), UDim2.new(0,0,0,64),  Color3.fromRGB(90,140,210))
-local seedsBtn= makeButton(gbody, "🌱 BUY ALL SEEDS",     UDim2.new(1,0,0,28), UDim2.new(0,0,0,96),  Color3.fromRGB(100,170,100))
-local gearBtn2= makeButton(gbody, "🧰 BUY ALL GEAR",      UDim2.new(1,0,0,28), UDim2.new(0,0,0,128), Color3.fromRGB(120,140,200))
-local eggsBtn = makeButton(gbody, "🥚 BUY EGGS",          UDim2.new(1,0,0,28), UDim2.new(0,0,0,160), Color3.fromRGB(150,120,200))
-local lolliBtn= makeButton(gbody, "🍭 BUY 50x LOLLIPOP",  UDim2.new(1,0,0,28), UDim2.new(0,0,0,192), Color3.fromRGB(220,120,200))
-local coordsLabel = makeLabel(gbody, "Position: (…)",     UDim2.new(1,0,0,18), UDim2.new(0,0,0,224), Color3.fromRGB(200,200,255), false)
+local gearClose = Instance.new("TextButton")
+gearClose.Size = UDim2.fromOffset(20, 20)
+gearClose.Position = UDim2.new(1, -26, 0, 4)
+gearClose.BackgroundColor3 = Color3.fromRGB(255, 72, 72)
+gearClose.TextColor3 = Color3.fromRGB(255,255,255)
+gearClose.Text = "✕"
+gearClose.Font = Enum.Font.GothamBold
+gearClose.TextSize = 12
+gearClose.Parent = gearTitleBar
+rounded(gearClose,0)
 
-local function toggleGearPanel(forceOpen)
-	if not gearFrame or not gearFrame.Parent then return end
-	gearGui.Enabled = true
-	if forceOpen == true then
-		gearFrame.Visible = true
-	else
-		gearFrame.Visible = not gearFrame.Visible
-	end
-	if gearFrame.Visible then clampOnScreen(gearFrame) end
-end
+local gearContent = Instance.new("Frame")
+gearContent.Size = UDim2.new(1, -16, 1, -40)
+gearContent.Position = UDim2.new(0, 8, 0, 36)
+gearContent.BackgroundTransparency = 1
+gearContent.Parent = gearFrame
 
-gclose.MouseButton1Click:Connect(function() gearFrame.Visible=false end)
-gearBtn.MouseButton1Click:Connect(function() toggleGearPanel(true) end)
+makeDraggable(gearFrame, gearTitleBar)
 
+-- Gear content
+local tpGear = Instance.new("TextButton")
+tpGear.Size = UDim2.new(1, 0, 0, 30)
+tpGear.Position = UDim2.new(0, 0, 0, 0)
+tpGear.BackgroundColor3 = Color3.fromRGB(60, 180, 60)
+tpGear.TextColor3 = Color3.fromRGB(255,255,255)
+tpGear.Text = "📍 TP GEAR SHOP"
+tpGear.Font = Enum.Font.GothamBold
+tpGear.TextSize = 13
+tpGear.Parent = gearContent
+rounded(tpGear,8)
+
+coordsLabel = Instance.new("TextLabel")
+coordsLabel.Size = UDim2.new(1, 0, 0, 22)
+coordsLabel.Position = UDim2.new(0, 0, 0, 36)
+coordsLabel.BackgroundTransparency = 1
+coordsLabel.TextColor3 = Color3.fromRGB(200,200,255)
+coordsLabel.TextXAlignment = Enum.TextXAlignment.Left
+coordsLabel.Font = Enum.Font.Gotham
+coordsLabel.TextSize = 12
+coordsLabel.Text = "Position: (…)"
+coordsLabel.Parent = gearContent
+
+local sellBtn = Instance.new("TextButton")
+sellBtn.Size = UDim2.new(1, 0, 0, 26)
+sellBtn.Position = UDim2.new(0, 0, 0, 62)
+sellBtn.BackgroundColor3 = Color3.fromRGB(200, 130, 90)
+sellBtn.TextColor3 = Color3.fromRGB(255,255,255)
+sellBtn.Text = "🧺 SELL INVENTORY"
+sellBtn.Font = Enum.Font.GothamBold
+sellBtn.TextSize = 12
+sellBtn.Parent = gearContent
+rounded(sellBtn,8)
+
+-- Submit All (Cauldron)
+local submitCauldronBtn = Instance.new("TextButton")
+submitCauldronBtn.Size = UDim2.new(1, 0, 0, 26)
+submitCauldronBtn.Position = UDim2.new(0, 0, 0, 94)
+submitCauldronBtn.BackgroundColor3 = Color3.fromRGB(140, 110, 200)
+submitCauldronBtn.TextColor3 = Color3.fromRGB(255,255,255)
+submitCauldronBtn.Text = "🧪 SUBMIT ALL (Cauldron)"
+submitCauldronBtn.Font = Enum.Font.GothamBold
+submitCauldronBtn.TextSize = 12
+submitCauldronBtn.Parent = gearContent
+rounded(submitCauldronBtn,8)
+
+-- Seeds row
+local seedsRow = Instance.new("Frame")
+seedsRow.Size = UDim2.new(1, 0, 0, 26)
+seedsRow.Position = UDim2.new(0, 0, 0, 126)
+seedsRow.BackgroundTransparency = 1
+seedsRow.Parent = gearContent
+
+local buyAllSeedsButton = Instance.new("TextButton")
+buyAllSeedsButton.Size = UDim2.new(0.48, -4, 1, 0)
+buyAllSeedsButton.Position = UDim2.new(0, 0, 0, 0)
+buyAllSeedsButton.BackgroundColor3 = Color3.fromRGB(100, 170, 100)
+buyAllSeedsButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+buyAllSeedsButton.Text = "🌱 BUY ALL SEEDS"
+buyAllSeedsButton.Font = Enum.Font.GothamBold
+buyAllSeedsButton.TextSize = 12
+buyAllSeedsButton.Parent = seedsRow
+rounded(buyAllSeedsButton,8)
+
+local autoSeedsBtn = Instance.new("TextButton")
+autoSeedsBtn.Size = UDim2.new(0.22, -4, 1, 0)
+autoSeedsBtn.Position = UDim2.new(0.48, 4, 0, 0)
+autoSeedsBtn.BackgroundColor3 = Color3.fromRGB(70,160,90) -- ON
+autoSeedsBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+autoSeedsBtn.Text = "Auto: ON"
+autoSeedsBtn.Font = Enum.Font.GothamBold
+autoSeedsBtn.TextSize = 12
+autoSeedsBtn.Parent = seedsRow
+rounded(autoSeedsBtn,8)
+
+seedsTimerLabel = Instance.new("TextLabel")
+seedsTimerLabel.Size = UDim2.new(0.30, 0, 1, 0)
+seedsTimerLabel.Position = UDim2.new(0.70, 4, 0, 0)
+seedsTimerLabel.BackgroundColor3 = Color3.fromRGB(60, 65, 95)
+seedsTimerLabel.TextColor3 = Color3.fromRGB(220, 230, 255)
+seedsTimerLabel.Text = "⏳ Next: 1:00"
+seedsTimerLabel.Font = Enum.Font.Gotham
+seedsTimerLabel.TextSize = 12
+seedsTimerLabel.Parent = seedsRow
+rounded(seedsTimerLabel,8)
+
+-- Gear row
+local gearRow = Instance.new("Frame")
+gearRow.Size = UDim2.new(1, 0, 0, 26)
+gearRow.Position = UDim2.new(0, 0, 0, 158)
+gearRow.BackgroundTransparency = 1
+gearRow.Parent = gearContent
+
+local buyAllGearButton = Instance.new("TextButton")
+buyAllGearButton.Size = UDim2.new(0.48, -4, 1, 0)
+buyAllGearButton.Position = UDim2.new(0, 0, 0, 0)
+buyAllGearButton.BackgroundColor3 = Color3.fromRGB(120, 140, 200)
+buyAllGearButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+buyAllGearButton.Text = "🧰 BUY ALL GEAR"
+buyAllGearButton.Font = Enum.Font.GothamBold
+buyAllGearButton.TextSize = 12
+buyAllGearButton.Parent = gearRow
+rounded(buyAllGearButton,8)
+
+local autoGearBtn = Instance.new("TextButton")
+autoGearBtn.Size = UDim2.new(0.22, -4, 1, 0)
+autoGearBtn.Position = UDim2.new(0.48, 4, 0, 0)
+autoGearBtn.BackgroundColor3 = Color3.fromRGB(70,140,180) -- ON
+autoGearBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+autoGearBtn.Text = "Auto: ON"
+autoGearBtn.Font = Enum.Font.GothamBold
+autoGearBtn.TextSize = 12
+autoGearBtn.Parent = gearRow
+rounded(autoGearBtn,8)
+
+gearTimerLabel = Instance.new("TextLabel")
+gearTimerLabel.Size = UDim2.new(0.30, 0, 1, 0)
+gearTimerLabel.Position = UDim2.new(0.70, 4, 0, 0)
+gearTimerLabel.BackgroundColor3 = Color3.fromRGB(60, 65, 95)
+gearTimerLabel.TextColor3 = Color3.fromRGB(220, 230, 255)
+gearTimerLabel.Text = "⏳ Next: 1:00"
+gearTimerLabel.Font = Enum.Font.Gotham
+gearTimerLabel.TextSize = 12
+gearTimerLabel.Parent = gearRow
+rounded(gearTimerLabel,8)
+
+-- EGGS row
+local eggsRow = Instance.new("Frame")
+eggsRow.Size = UDim2.new(1, 0, 0, 26)
+eggsRow.Position = UDim2.new(0, 0, 0, 190)
+eggsRow.BackgroundTransparency = 1
+eggsRow.Parent = gearContent
+
+local buyEggsButton = Instance.new("TextButton")
+buyEggsButton.Size = UDim2.new(0.48, -4, 1, 0)
+buyEggsButton.Position = UDim2.new(0, 0, 0, 0)
+buyEggsButton.BackgroundColor3 = Color3.fromRGB(150, 120, 200)
+buyEggsButton.TextColor3 = Color3.fromRGB(255,255,255)
+buyEggsButton.Text = "🥚 BUY EGGS"
+buyEggsButton.Font = Enum.Font.GothamBold
+buyEggsButton.TextSize = 12
+buyEggsButton.Parent = eggsRow
+rounded(buyEggsButton,8)
+
+local autoEggsBtn = Instance.new("TextButton")
+autoEggsBtn.Size = UDim2.new(0.22, -4, 1, 0)
+autoEggsBtn.Position = UDim2.new(0.48, 4, 0, 0)
+autoEggsBtn.BackgroundColor3 = Color3.fromRGB(120,100,160) -- ON
+autoEggsBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+autoEggsBtn.Text = "Auto: ON"
+autoEggsBtn.Font = Enum.Font.GothamBold
+autoEggsBtn.TextSize = 12
+autoEggsBtn.Parent = eggsRow
+rounded(autoEggsBtn,8)
+
+eggsTimerLabel = Instance.new("TextLabel")
+eggsTimerLabel.Size = UDim2.new(0.30, 0, 1, 0)
+eggsTimerLabel.Position = UDim2.new(0.70, 4, 0, 0)
+eggsTimerLabel.BackgroundColor3 = Color3.fromRGB(60, 65, 95)
+eggsTimerLabel.TextColor3 = Color3.fromRGB(220, 230, 255)
+eggsTimerLabel.Text = "⏳ Next: 1:00"
+eggsTimerLabel.Font = Enum.Font.Gotham
+eggsTimerLabel.TextSize = 12
+eggsTimerLabel.Parent = eggsRow
+rounded(eggsTimerLabel,8)
+
+-- Lollipop x50
+local lolliBtn = Instance.new("TextButton")
+lolliBtn.Size = UDim2.new(1, 0, 0, 26)
+lolliBtn.Position = UDim2.new(0, 0, 0, 222)
+lolliBtn.BackgroundColor3 = Color3.fromRGB(200, 140, 90)
+lolliBtn.TextColor3 = Color3.fromRGB(255,255,255)
+lolliBtn.Text = "🍭 BUY LOLLIPOP x50"
+lolliBtn.Font = Enum.Font.GothamBold
+lolliBtn.TextSize = 12
+lolliBtn.Parent = gearContent
+rounded(lolliBtn,8)
+
+-- gear actions
 tpGear.MouseButton1Click:Connect(function() teleportTo(GEAR_SHOP_POS) end)
 sellBtn.MouseButton1Click:Connect(function()
-	local r = getSellInventoryRemote(); if not r then return end
-	local hrp = getHRP(); if not hrp then return end
+	local r = getSellInventoryRemote()
+	if not r then msg("❌ Remote Sell_Inventory introuvable.", Color3.fromRGB(255,120,120)); return end
+	local hrp = getHRP(); if not hrp then msg("❌ HRP introuvable.", Color3.fromRGB(255,120,120)); return end
 	local back = hrp.CFrame
-	withFrozenCamera(function()
-		teleportTo(SELL_NPC_POS); task.wait(0.20); r:FireServer(); task.wait(0.05); hrp.CFrame = back
-	end)
-	resetCameraSafe("sellBtn")
+	teleportTo(SELL_NPC_POS); task.wait(0.20); r:FireServer(); task.wait(0.05); hrp.CFrame = back
+	msg("🧺 Inventaire vendu (TP/retour).", Color3.fromRGB(220,200,140))
 end)
-chipBtn.MouseButton1Click:Connect(submitAllChipmunk)
-seedsBtn.MouseButton1Click:Connect(buyAllSeedsWorker)
-gearBtn2.MouseButton1Click:Connect(buyAllGearWorker)
-eggsBtn.MouseButton1Click:Connect(buyAllEggsWorker)
+submitCauldronBtn.MouseButton1Click:Connect(function()
+	local r = getWitchesSubmitRemote()
+	if not r then msg("❌ WitchesBrew.SubmitItemToCauldron introuvable.", Color3.fromRGB(255,120,120)); return end
+	local ok, res = pcall(function() return r:InvokeServer("All") end)
+	if ok then msg("🧪 Cauldron: Submit All OK.", Color3.fromRGB(180,230,200))
+	else msg("Cauldron error: "..tostring(res), Color3.fromRGB(255,160,140)) end
+end)
+buyAllSeedsButton.MouseButton1Click:Connect(function() buyAllSeedsWorker(); seedsTimer = AUTO_PERIOD; updateTimerLabels() end)
+buyAllGearButton.MouseButton1Click:Connect(function() buyAllGearWorker();  gearTimer  = AUTO_PERIOD; updateTimerLabels() end)
+buyEggsButton.MouseButton1Click:Connect(function() buyAllEggsWorker();   eggsTimer = AUTO_PERIOD; updateTimerLabels() end)
 lolliBtn.MouseButton1Click:Connect(buyLollipop50)
 
--- Live coords (ralenti)
-task.spawn(function()
-	local acc=0
+autoSeedsBtn.MouseButton1Click:Connect(function()
+	autoBuySeeds = not autoBuySeeds
+	autoSeedsBtn.BackgroundColor3 = autoBuySeeds and Color3.fromRGB(70,160,90) or Color3.fromRGB(80,90,120)
+	autoSeedsBtn.Text = autoBuySeeds and "Auto: ON" or "Auto: OFF"
+	if autoBuySeeds then task.spawn(function() buyAllSeedsWorker(); seedsTimer=AUTO_PERIOD; updateTimerLabels() end) end
+	updateTimerLabels()
+end)
+autoGearBtn.MouseButton1Click:Connect(function()
+	autoBuyGear = not autoBuyGear
+	autoGearBtn.BackgroundColor3 = autoBuyGear and Color3.fromRGB(70,140,180) or Color3.fromRGB(80,90,120)
+	autoGearBtn.Text = autoBuyGear and "Auto: ON" or "Auto: OFF"
+	if autoBuyGear then task.spawn(function() buyAllGearWorker(); gearTimer=AUTO_PERIOD; updateTimerLabels() end) end
+	updateTimerLabels()
+end)
+autoEggsBtn.MouseButton1Click:Connect(function()
+	autoBuyEggs = not autoBuyEggs
+	autoEggsBtn.BackgroundColor3 = autoBuyEggs and Color3.fromRGB(120,100,160) or Color3.fromRGB(80,90,120)
+	autoEggsBtn.Text = autoBuyEggs and "Auto: ON" or "Auto: OFF"
+	if autoBuyEggs then task.spawn(function() buyAllEggsWorker(); eggsTimer=AUTO_PERIOD; updateTimerLabels() end) end
+	updateTimerLabels()
+end)
+gearClose.MouseButton1Click:Connect(function() gearFrame.Visible = false end)
+local function toggleGear() gearFrame.Visible = not gearFrame.Visible; if gearFrame.Visible then clampOnScreen(gearFrame) end end
+toggleGearBtn.MouseButton1Click:Connect(toggleGear)
+
+-- live coords
+do
+	local acc = 0
 	RunService.RenderStepped:Connect(function(dt)
-		acc+=dt; if acc < COORDS_REFRESH then return end; acc=0
+		acc = acc + dt; if acc < 0.2 then return end; acc = 0
 		local hrp = getHRP()
 		if hrp then
-			coordsLabel.Text = string.format("Position: (%d,%d,%d)", math.floor(hrp.Position.X), math.floor(hrp.Position.Y), math.floor(hrp.Position.Z))
+			local x = math.floor(hrp.Position.X)
+			local y = math.floor(hrp.Position.Y)
+			local z = math.floor(hrp.Position.Z)
+			coordsLabel.Text = ("Position: (%d, %d, %d)"):format(x,y,z)
 		else
 			coordsLabel.Text = "Position: (N/A)"
 		end
 	end)
+end
+
+-- =========== Anti-AFK ===========
+player.Idled:Connect(function()
+	pcall(function()
+		VirtualUser:CaptureController()
+		VirtualUser:ClickButton2(Vector2.new(0,0))
+	end)
 end)
-
---==================================================
---============  ACORN COLLECTOR (LITE)  ============
---==================================================
-local acornGui
-local function ensureAcornGui()
-	if acornGui and acornGui.Parent then return acornGui end
-
-	local ac = {}
-	ac.config = {
-		acornName = "Acorn",
-		normalSpawnInterval = 109, feverSpawnInterval = 30, acornDuration = 30,
-		feverGroundDistance = 6, groundIgnoreHeight = 20, feverYTolerance = 2,
-		instantTp = false, tpSpeed = 120, returnToStartAfterCollect = true,
-		freezeCameraOnTP = false,  -- désactivé pour éviter les freezes
-		stopHarvestWhenBackpackFull = true,
-		autoHarvestRadius = 25,
-		autoHarvestTick = AUTO_HARVEST_TICK,
-		autoHarvestUsePrompts = true,
-		promptHoldDuration = 0.25,
-		plantWhitelist = { "plant","harvest","crop","fruit","vegetable","tree","bush","flower","pick","collect" },
-		plantExclude  = { "mushroom" },
-		promptTextWhitelist = { "harvest","pick","collect","récolter","cueillir" },
-		promptBlacklist = { "fence","save","slot","skin","shop","buy","sell","chest","settings","rename","open","claim","craft","upgrade" },
-		soundAlert = not DISABLE_SOUNDS,
-		screenAlert = not LIGHT_MODE,
-	}
-
-	ac.nextSpawnTime = tick() + ac.config.normalSpawnInterval
-	ac.currentAcorn = nil
-	ac.autoTPOnDetect = true
-	ac.autoHarvestEnabled = false
-	ac.isNuttyFever = false
-	ac.feverLastSeenAt = 0
-	ac.acornCollected = 0
-	ac.scanAutoEnabled = true
-	ac.scanPeriod = AUTO_SCAN_PERIOD
-	ac.harvestLimit = 100
-	ac.harvestAttempts = 0
-
-	ac.backpackCountValue, ac.backpackCapValue = nil, nil
-	local function isVal(x) return x and (x:IsA("IntValue") or x:IsA("NumberValue")) end
-	local COUNT_NAMES = { "count","current","amount","qty","quantity","items","inventory","backpack","bag","held","stored" }
-	local CAP_NAMES   = { "capacity","cap","max","maxcapacity","maxamount","limit","maxitems","maxinventory","maxbackpack" }
-	local function nameMatchAny(nm, list) nm=string.lower(tostring(nm or "")); for _,k in ipairs(list) do if nm==k or nm:find(k) then return true end end return false end
-	local function tryAutoBindBackpack()
-		if ac.backpackCountValue and ac.backpackCapValue then return true end
-		local roots = { player, player:FindFirstChild("PlayerGui"), player:FindFirstChild("PlayerScripts"), ReplicatedStorage, WorkspaceService }
-		local bestScore, bestPair = -1, nil
-		for _, root in ipairs(roots) do
-			if root then
-				for _, v in ipairs(root:GetDescendants()) do
-					if isVal(v) then
-						if nameMatchAny(v.Name, COUNT_NAMES) or nameMatchAny(v.Name, CAP_NAMES) then
-							local parent=v.Parent or root
-							local count = parent and parent:FindFirstChildWhichIsA("IntValue", true)
-							local cap   = parent and parent:FindFirstChildWhichIsA("NumberValue", true)
-							if count and cap and nameMatchAny(count.Name, COUNT_NAMES) and nameMatchAny(cap.Name, CAP_NAMES) then
-								local c, m = tonumber(count.Value) or -1, tonumber(cap.Value) or -1
-								if c>=0 and m>0 and c<=m then local sc=(m-c); if sc>bestScore then bestScore=sc; bestPair={count,cap} end end
-							end
-						end
-					end
-				end
-			end
-		end
-		if bestPair then ac.backpackCountValue, ac.backpackCapValue = bestPair[1], bestPair[2]; return true end
-		return false
+antiAFKBtn.MouseButton1Click:Connect(function()
+	antiAFKEnabled = not antiAFKEnabled
+	antiAFKBtn.Text = antiAFKEnabled and "🛡️ Anti-AFK: ON" or "🛡️ Anti-AFK: OFF"
+	antiAFKBtn.BackgroundColor3 = antiAFKEnabled and Color3.fromRGB(80,140,90) or Color3.fromRGB(100,130,100)
+	if antiAFKEnabled then msg("🛡️ Anti-AFK activé (nudge périodique + VirtualUser).", Color3.fromRGB(180,230,180))
+	else msg("🛡️ Anti-AFK désactivé.", Color3.fromRGB(230,200,180))
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if hum then hum:Move(Vector3.new(0,0,0), true) end
 	end
-	local function isBackpackFull()
-		if not (ac.backpackCountValue and ac.backpackCapValue) then tryAutoBindBackpack() end
-		local c = ac.backpackCountValue and tonumber(ac.backpackCountValue.Value) or nil
-		local m = ac.backpackCapValue   and tonumber(ac.backpackCapValue.Value)   or nil
-		return (c and m and c>=m) and true or false, c, m
-	end
-
-	-- ACORN detection + TP/collect
-	local function isAcornBasePart(inst)
-		if not inst then return nil end
-		if inst.Name ~= ac.config.acornName then return nil end
-		if inst:IsA("BasePart") then return inst end
-		if inst:IsA("Model") then return inst:FindFirstChildWhichIsA("BasePart") end
-		return nil
-	end
-
-	local function isYAlignedWithPlayer(acornPart)
-		local hrp = getHRP(); if not hrp or not acornPart then return false end
-		return math.abs(acornPart.Position.Y - hrp.Position.Y) <= ac.config.feverYTolerance
-	end
-	local function isGrounded(acorn)
-		if not acorn or not acorn.Parent then return false end
-		local origin=acorn.Position; local direction=Vector3.new(0,-200,0)
-		local params=RaycastParams.new(); params.FilterDescendantsInstances={acorn}; params.FilterType=Enum.RaycastFilterType.Exclude; params.IgnoreWater=false
-		local result=workspace:Raycast(origin,direction,params)
-		if result then local dist=(origin-result.Position).Magnitude; return dist <= ac.config.feverGroundDistance else return false end
-	end
-	local function bestAcornCandidate(a,b)
-		if not a then return b end; if not b then return a end
-		local hrp = getHRP()
-		local da = hrp and (a.Position - hrp.Position).Magnitude or math.huge
-		local db = hrp and (b.Position - hrp.Position).Magnitude or math.huge
-		if ac.isNuttyFever then
-			local aY, bY = isYAlignedWithPlayer(a), isYAlignedWithPlayer(b)
-			if aY ~= bY then return aY and a or b end
-			local ag, bg = isGrounded(a), isGrounded(b)
-			if ag ~= bg then return ag and a or b end
-		end
-		return (da <= db) and a or b
-	end
-
-	ac.uiCountLabel = nil
-	local function setCount(n)
-		if ac.uiCountLabel then
-			ac.uiCountLabel.Text = ("🥜 Collected: %d"):format(n or 0)
-		end
-	end
-	local function selectCurrentAcorn(candidate)
-		if not candidate or not candidate.Parent then return end
-		if not ac.currentAcorn or not ac.currentAcorn.Parent then
-			ac.currentAcorn = candidate; return
-		end
-		local best = bestAcornCandidate(ac.currentAcorn, candidate)
-		ac.currentAcorn = best
-	end
-
-	local function onAcornAppeared(bp)
-		ac.isNuttyFever = true; ac.feverLastSeenAt = tick()
-		ac.nextSpawnTime = tick() + (ac.isNuttyFever and ac.config.feverSpawnInterval or ac.config.normalSpawnInterval)
-		if ac.isNuttyFever and not isYAlignedWithPlayer(bp) then return end
-		if ac.isNuttyFever then local grounded = isGrounded(bp); if (not grounded) and (bp.Position.Y > ac.config.groundIgnoreHeight) then return end end
-		selectCurrentAcorn(bp)
-		if ac.autoTPOnDetect and ac.currentAcorn then
-			task.spawn(function()
-				local hrp=getHRP(); if not hrp then return end
-				local originalPos=hrp.Position
-				local function doCollect()
-					local targetPos = ac.currentAcorn.Position + Vector3.new(0,3,0)
-					hrp.AssemblyLinearVelocity = Vector3.new(); hrp.AssemblyAngularVelocity = Vector3.new()
-					hrp.CFrame = CFrame.new(targetPos); task.wait(0.10)
-					pcall(function()
-						local prompt = ac.currentAcorn:FindFirstChildOfClass("ProximityPrompt"); if prompt then pcall(fireproximityprompt, prompt) end
-						local click  = ac.currentAcorn:FindFirstChildOfClass("ClickDetector");   if click  then pcall(fireclickdetector,  click)  end
-					end)
-					task.wait(0.15)
-					if ac.config.returnToStartAfterCollect then hrp.CFrame = CFrame.new(originalPos) end
-					resetCameraSafe("acorn-post")
-				end
-				if ac.config.freezeCameraOnTP then withFrozenCamera(doCollect) else doCollect() end
-			end)
-		end
-	end
-	local function onAcornDisappeared(inst)
-		if ac.currentAcorn and (inst == ac.currentAcorn or ac.currentAcorn:IsDescendantOf(inst)) then
-			ac.currentAcorn = nil; ac.acornCollected += 1; setCount(ac.acornCollected)
-		end
-	end
-
-	workspace.DescendantAdded:Connect(function(inst) local bp=isAcornBasePart(inst); if bp then onAcornAppeared(bp) end end)
-	workspace.DescendantRemoving:Connect(onAcornDisappeared)
-
-	-- Scan (light)
-	local function scanMapAcorn()
-		local best=nil
-		for _, obj in ipairs(workspace:GetDescendants()) do
-			local bp = isAcornBasePart(obj)
-			if bp then
-				local y = bp.Position.Y
-				if y >= 1 and y <= 4 then best = bestAcornCandidate(best, bp); break end
-			end
-		end
-		if not best then
-			for _, obj in ipairs(workspace:GetDescendants()) do
-				local bp = isAcornBasePart(obj)
-				if bp then best = bestAcornCandidate(best, bp); break end
-			end
-		end
-		if best then onAcornAppeared(best); return true, best end
-		return false, nil
-	end
-
-	-- AUTO HARVEST (v2.4 light) + LIMIT 100
-	local function lowerx(s) if typeof(s)=="string" then return string.lower(s) end return "" end
-	local function containsAny(s, list) for _,kw in ipairs(list) do if s:find(kw) then return true end end return false end
-	local function isPlantPrompt(prompt)
-		if not prompt or not prompt.Parent then return false end
-		local action = lowerx(prompt.ActionText); local object = lowerx(prompt.ObjectText)
-		if containsAny(action, ac.config.plantExclude) or containsAny(object, ac.config.plantExclude) then return false end
-		for _,kw in ipairs(ac.config.promptTextWhitelist) do
-			if action:find(kw) or object:find(kw) then
-				local node = prompt.Parent; local steps=0
-				while node and steps<4 do
-					local nm=lowerx(node.Name)
-					if containsAny(nm, ac.config.plantExclude) then return false end
-					steps+=1; node=node.Parent
-				end
-				return true
-			end
-		end
-		local node=prompt; local steps=0
-		while node and steps<4 do
-			local nm = lowerx(node.Name)
-			for _,bad in ipairs(ac.config.promptBlacklist) do if nm:find(bad) then return false end end
-			if containsAny(nm, ac.config.plantExclude) then return false end
-			for _,good in ipairs(ac.config.plantWhitelist) do if nm:find(good) then return true end end
-			node = node.Parent; steps+=1
-		end
-		return false
-	end
-
-	local AutoCollectBtn, AutoTPBtn, AutoHarvestBtn, AutoScan
-	local function refreshButtons()
-		if AutoCollectBtn and AutoTPBtn then
-			local on = ac.autoTPOnDetect
-			local cOn, cOff = Color3.fromRGB(60,200,60), Color3.fromRGB(200,60,60)
-			AutoCollectBtn.BackgroundColor3 = on and cOn or cOff
-			AutoTPBtn.BackgroundColor3      = on and cOn or cOff
-			AutoCollectBtn.Text = on and "🤖 Auto Collect: ON" or "🤖 Auto Collect: OFF"
-			AutoTPBtn.Text      = on and "⚡ Auto TP on Detect: ON" or "⚡ Auto TP on Detect: OFF"
-		end
-		if AutoHarvestBtn then
-			local cOn = Color3.fromRGB(100,180,80); local cOff = Color3.fromRGB(200,120,60)
-			if ac.autoHarvestEnabled then
-				local left = math.max(0, ac.harvestLimit - ac.harvestAttempts)
-				AutoHarvestBtn.BackgroundColor3 = cOn
-				AutoHarvestBtn.Text = ("🌾 Auto Harvest (plantes): ON  • tries left=%d"):format(left)
-			else
-				AutoHarvestBtn.BackgroundColor3 = cOff
-				AutoHarvestBtn.Text = "🌾 Auto Harvest (plantes): OFF"
-			end
-		end
-		if AutoScan then
-			local cOn = Color3.fromRGB(110,150,90); local cOff = Color3.fromRGB(80,100,140)
-			AutoScan.BackgroundColor3 = ac.scanAutoEnabled and cOn or cOff
-			AutoScan.Text = (ac.scanAutoEnabled and "📡 Auto-scan: ON (" or "📡 Auto-scan: OFF (")..tostring(ac.scanPeriod).."s)"
-		end
-	end
-
-	local function getNearbyPlantPrompts(radius)
-		local prompts = {}
-		local hrp=getHRP(); if not hrp then return prompts end
-		local params = OverlapParams.new(); params.FilterDescendantsInstances={player.Character}; params.FilterType=Enum.RaycastFilterType.Blacklist
-		local parts = {}
-		pcall(function() parts = workspace:GetPartBoundsInRadius(hrp.Position, radius, params) end)
-		local seen={}
-		for _, part in ipairs(parts) do
-			if part and part.Parent and not seen[part.Parent] then
-				seen[part.Parent]=true
-				for _, child in ipairs(part.Parent:GetDescendants()) do
-					if child:IsA("ProximityPrompt") and isPlantPrompt(child) then table.insert(prompts, child) end
-				end
-			end
-		end
-		return prompts
-	end
-
-	task.spawn(function()
-		while true do
-			if ac.autoHarvestEnabled then
-				if ac.config.stopHarvestWhenBackpackFull and isBackpackFull() then
-					ac.autoHarvestEnabled=false
-					refreshButtons()
-				else
-					local prompts = ac.config.autoHarvestUsePrompts and getNearbyPlantPrompts(ac.config.autoHarvestRadius) or {}
-					for _, prompt in ipairs(prompts) do
-						if not ac.autoHarvestEnabled then break end
-						if ac.harvestAttempts >= ac.harvestLimit then
-							ac.autoHarvestEnabled = false
-							refreshButtons()
-							break
-						end
-						ac.harvestAttempts += 1
-						pcall(fireproximityprompt, prompt)
-						if prompt.HoldDuration and prompt.HoldDuration > 0 then
-							task.wait(math.min(prompt.HoldDuration, ac.config.promptHoldDuration))
-							pcall(fireproximityprompt, prompt)
-						end
-					end
-				end
-				task.wait(ac.config.autoHarvestTick)
-			else
-				task.wait(0.25)
-			end
-		end
-	end)
-
-	-- UI Acorn (responsive + scroll)
-	acornGui = Instance.new("ScreenGui"); acornGui.Name="AcornLite"; acornGui.ResetOnSpawn=false; acornGui.IgnoreGuiInset=false
-	acornGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	acornGui.DisplayOrder = 15
-	acornGui.Parent=playerGui
-	local scaleAcorn = ensureUIScale(acornGui)
-
-	local Main = makeFrame(acornGui, UDim2.fromOffset(320, 420), UDim2.fromOffset(0,0), Color3.fromRGB(25,25,30))
-	local Header = makeFrame(Main, UDim2.new(1,0,0,40), UDim2.new(0,0,0,0), Color3.fromRGB(30,30,38))
-	makeLabel(Header, "🌰 Acorn Collector (L)", UDim2.new(1,-90,1,0), UDim2.new(0,12,0,0), Color3.fromRGB(255,200,0), true)
-	local Close = makeButton(Header, "✖", UDim2.fromOffset(28,28), UDim2.new(1,-34,0.5,-14), Color3.fromRGB(220,50,50))
-	local Min   = makeButton(Header, "—", UDim2.fromOffset(28,28), UDim2.new(1,-66,0.5,-14), Color3.fromRGB(110,110,110))
-
-	local Body = makeFrame(Main, UDim2.new(1,-16,1,-52), UDim2.new(0,8,0,46), Color3.fromRGB(25,25,30)); Body.BackgroundTransparency=1
-	local Scroll, updateCanvas = ensureScrolling(Main, Body)
-
-	local TimerBox = makeFrame(Scroll, UDim2.new(1,0,0,90), UDim2.new(0,0,0,0), Color3.fromRGB(35,35,42))
-	makeLabel(TimerBox, "⏱️ Prochain spawn (Chubby):", UDim2.new(1,-20,0,24), UDim2.new(0,10,0,6), Color3.fromRGB(255,255,255), true)
-	local Countdown = makeLabel(TimerBox, "01:49", UDim2.new(0.5,-10,0,40), UDim2.new(0,8,0,40), Color3.fromRGB(255,200,0), false); Countdown.TextXAlignment=Enum.TextXAlignment.Center; Countdown.TextSize=28
-	ac.uiCountLabel = makeLabel(TimerBox, "🥜 Collected: 0", UDim2.new(0.5,-10,0,40), UDim2.new(0.5,2,0,40), Color3.fromRGB(180,230,180), true); ac.uiCountLabel.TextXAlignment=Enum.TextXAlignment.Center; ac.uiCountLabel.TextSize=18
-
-	local StatusBox = makeFrame(Scroll, UDim2.new(1,0,0,50), UDim2.new(0,0,0,96), Color3.fromRGB(35,35,42))
-	local Status = makeLabel(StatusBox, "📍 Status: En veille…", UDim2.new(1,-20,1,-8), UDim2.new(0,10,0,4), Color3.fromRGB(200,200,200), false)
-
-	local AutoCollectBtn_local = makeButton(Scroll, "🤖 Auto Collect: ON", UDim2.new(1,0,0,40), UDim2.new(0,0,0,154), Color3.fromRGB(60,200,60))
-	local AutoTPBtn_local      = makeButton(Scroll, "⚡ Auto TP on Detect: ON", UDim2.new(1,0,0,40), UDim2.new(0,0,0,198), Color3.fromRGB(60,200,60))
-	local AutoHarvestBtn_local = makeButton(Scroll, "🌾 Auto Harvest (plantes): OFF", UDim2.new(1,0,0,40), UDim2.new(0,0,0,242), Color3.fromRGB(200,120,60))
-
-	local ScanRow   = makeFrame(Scroll, UDim2.new(1,0,0,40), UDim2.new(0,0,0,286), Color3.fromRGB(25,25,30)); ScanRow.BackgroundTransparency=1
-	local ScanNow   = makeButton(ScanRow, "🔎 Scan Now (Y 1–4)", UDim2.new(0.48,-4,1,0), UDim2.new(0,0,0,0), Color3.fromRGB(90,140,210))
-	local AutoScan_local  = makeButton(ScanRow, "📡 Auto-scan: ON ("..tostring(ac.scanPeriod).."s)", UDim2.new(0.52,0,1,0), UDim2.new(0.48,4,0,0), Color3.fromRGB(110,150,90))
-
-	AutoCollectBtn, AutoTPBtn, AutoHarvestBtn, AutoScan = AutoCollectBtn_local, AutoTPBtn_local, AutoHarvestBtn_local, AutoScan_local
-
-	makeDraggable(Main, Header)
-	attachMinimize(Main, Scroll, Min, Main.Size, 40)
-
-	local function applyAcornResp()
-		makeResponsive(Main, {anchor="rightCenter", w_pct=0.44, h_pct=0.66, minW=280, minH=280, maxW=640, maxH=720, offset={x=10,y=10}})()
-		updateCanvas()
-		refreshButtons()
-	end
-	applyAcornResp()
-	local cam = workspace.CurrentCamera
-	if cam then cam:GetPropertyChangedSignal("ViewportSize"):Connect(applyAcornResp) end
-
-	Close.MouseButton1Click:Connect(function() acornGui.Enabled=false end)
-
-	AutoCollectBtn.MouseButton1Click:Connect(function()
-		ac.autoTPOnDetect = not ac.autoTPOnDetect
-		refreshButtons()
-	end)
-	AutoTPBtn.MouseButton1Click:Connect(function()
-		ac.autoTPOnDetect = not ac.autoTPOnDetect
-		refreshButtons()
-	end)
-	AutoHarvestBtn.MouseButton1Click:Connect(function()
-		ac.autoHarvestEnabled = not ac.autoHarvestEnabled
-		if ac.autoHarvestEnabled then ac.harvestAttempts = 0 end
-		refreshButtons()
-	end)
-	ScanNow.MouseButton1Click:Connect(function() scanMapAcorn() end)
-	AutoScan_local.MouseButton1Click:Connect(function()
-		ac.scanAutoEnabled = not ac.scanAutoEnabled
-		refreshButtons()
-	end)
-
-	task.spawn(function()
-		while acornGui and acornGui.Parent do
-			if not acornGui.Enabled then task.wait(0.3) else
-				local timeLeft = ac.nextSpawnTime - tick()
-				Countdown.Text = (timeLeft>0) and fmtTime(timeLeft) or "SPAWN ?"
-				if ac.currentAcorn and ac.currentAcorn.Parent then
-					Status.Text = "📍 Status: ACORN détecté" .. (ac.isNuttyFever and " (Fever)" or "")
-					Status.TextColor3 = Color3.fromRGB(100,255,100)
-				else
-					Status.Text = "📍 Status: En veille / évènementiel"
-					Status.TextColor3 = Color3.fromRGB(200,200,200)
-				end
-				refreshButtons()
-				task.wait(UI_REFRESH)
-			end
-		end
-	end)
-
-	task.spawn(function()
-		while acornGui and acornGui.Parent do
-			if ac.scanAutoEnabled then
-				local _=scanMapAcorn()
-				for i=1, ac.scanPeriod do if not ac.scanAutoEnabled then break end task.wait(1) end
-			else
-				task.wait(0.4)
-			end
-		end
-	end)
-
-	return acornGui
-end
-
-local function toggleAcornUI()
-	local gui = ensureAcornGui()
-	if not gui then return end
-	gui.Enabled = not gui.Enabled
-	if gui.Enabled then
-		local frame = gui:FindFirstChildWhichIsA("Frame")
-		if frame then clampOnScreen(frame) end
-	end
-end
-openAcorn.MouseButton1Click:Connect(toggleAcornUI)
-
---==================================================
---==========  AUTO-BUY BACKGROUND (ON)  ============
---==================================================
-local seedsTimer, gearTimer, eggsTimer =
-	AUTO_PERIOD_SEEDS, AUTO_PERIOD_GEAR, AUTO_PERIOD_EGGS
-
+end)
 task.spawn(function()
 	while true do
-		task.wait(1)
-		if AUTO_BUY_SEEDS then seedsTimer = seedsTimer - 1 else seedsTimer = AUTO_PERIOD_SEEDS end
-		if AUTO_BUY_GEAR  then gearTimer  = gearTimer  - 1 else gearTimer  = AUTO_PERIOD_GEAR  end
-		if AUTO_BUY_EGGS  then eggsTimer  = eggsTimer  - 1 else eggsTimer  = AUTO_PERIOD_EGGS  end
-
-		if AUTO_BUY_SEEDS and seedsTimer<=0 then task.spawn(buyAllSeedsWorker); seedsTimer=AUTO_PERIOD_SEEDS end
-		if AUTO_BUY_GEAR  and gearTimer<=0  then task.spawn(buyAllGearWorker);  gearTimer =AUTO_PERIOD_GEAR  end
-		if AUTO_BUY_EGGS  and eggsTimer<=0  then task.spawn(buyAllEggsWorker);  eggsTimer =AUTO_PERIOD_EGGS  end
+		task.wait(ANTI_AFK_PERIOD)
+		if antiAFKEnabled then
+			local character = player.Character
+			local hum = character and character:FindFirstChildOfClass("Humanoid")
+			if hum then
+				hum:Move(Vector3.new(0, 0, -1), true)
+				task.wait(ANTI_AFK_DURATION)
+				hum:Move(Vector3.new(0, 0, 0), true)
+			end
+		end
 	end
 end)
 
---==================================================
---===========  RESPAWN / GC / INIT  ================
---==================================================
-local function applyGlobalScale()
-	local cam = workspace.CurrentCamera
-	local vp = (cam and cam.ViewportSize) or Vector2.new(1280,720)
-	local baseW = 1280
-	local s = vp.X / baseW
-	if vp.Y < 720 or vp.X < 1100 then s = s * 0.92 end
-	if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then s = s * 0.90 end
-	s = math.clamp(s, 0.70, 1.0)
-	local ac = playerGui:FindFirstChild("AcornLite")
-	local mainGui = playerGui:FindFirstChild("SaadLite")
-	if mainGui then local u = mainGui:FindFirstChild("AutoScale"); if u then u.Scale = s end end
-	local gearGuiNode = playerGui:FindFirstChild("GearPanelLite")
-	if gearGuiNode then local u = gearGuiNode:FindFirstChild("AutoScale"); if u then u.Scale = s end end
-	if ac then local u = ac:FindFirstChild("AutoScale"); if u then u.Scale = s end end
-end
-applyGlobalScale()
-local cam0 = workspace.CurrentCamera
-if cam0 then cam0:GetPropertyChangedSignal("ViewportSize"):Connect(applyGlobalScale) end
-UserInputService:GetPropertyChangedSignal("TouchEnabled"):Connect(applyGlobalScale)
-UserInputService:GetPropertyChangedSignal("KeyboardEnabled"):Connect(applyGlobalScale)
-
-applySpeed(currentSpeed); applyGravity(currentGravity); applyJump(currentJump)
+-- Respawn handling
+applySpeed(currentSpeed); applyGravity(currentGravity); applyJump(currentJump); updateTimerLabels()
 player.CharacterAdded:Connect(function(char)
 	char:WaitForChild("HumanoidRootPart", 5)
 	local hum = char:FindFirstChildOfClass("Humanoid")
 	if hum then hum.WalkSpeed = currentSpeed; hum.JumpPower = currentJump end
 	workspace.Gravity = currentGravity
-	if isNoclipping then task.wait(0.2); if noclipConnection then noclipConnection:Disconnect(); noclipConnection=nil end; isNoclipping=false; end
-	resetCameraSafe("respawn")
+	if isNoclipping then task.wait(0.2); if noclipConnection then noclipConnection:Disconnect(); noclipConnection=nil end; isNoclipping=false end
 end)
 
--- GC périodique
-task.spawn(function()
-	while true do
-		task.wait(GC_SWEEP_EVERY)
-		pcall(function() collectgarbage("collect") end)
+-- ==== Auto-scale ====
+applyAutoScale(screenGui, {mainFrame})
+applyAutoScale(gearGui,   {gearFrame})
+
+-- =========================================================
+-- ====== Heuristiques & primitives Harvest communes =======
+-- =========================================================
+local _FPP = (rawget(_G or getfenv(), "fireproximityprompt")) or _G.fireproximityprompt or _G.FireProximityPrompt or getfenv().fireproximityprompt or fireproximityprompt
+local HAS_FIRE_PROX = (typeof(_FPP) == "function")
+
+local PromptHeur = {
+	plantWhitelist = { "plant","harvest","crop","fruit","vegetable","tree","bush","flower","pick","collect" },
+	plantExclude   = { "mushroom","champignon" },
+	promptTextWhitelist = { "harvest","pick","collect","récolter","cueillir" },
+	promptBlacklist = { "fence","save","slot","skin","shop","buy","sell","chest","settings","rename","open","claim","craft","upgrade" },
+}
+local function containsAny(s, list) for _, kw in ipairs(list) do if string.find(s, kw, 1, true) then return true end end return false end
+local function isPlantPrompt(prompt)
+	if not prompt or not prompt.Parent then return false end
+	local action = lower(prompt.ActionText)
+	local object = lower(prompt.ObjectText)
+	if containsAny(action, PromptHeur.plantExclude) or containsAny(object, PromptHeur.plantExclude) then return false end
+	for _, kw in ipairs(PromptHeur.promptTextWhitelist) do
+		if string.find(action, kw, 1, true) or string.find(object, kw, 1, true) then
+			local node = prompt.Parent
+			for i=1,4 do if not node then break end; if containsAny(lower(node.Name), PromptHeur.plantExclude) then return false end; node = node.Parent end
+			return true
+		end
+	end
+	local node = prompt
+	for i=1,4 do
+		if not node then break end
+		local nm = lower(node.Name)
+		for _, bad in ipairs(PromptHeur.promptBlacklist) do if string.find(nm, bad, 1, true) then return false end end
+		if containsAny(nm, PromptHeur.plantExclude) then return false end
+		for _, good in ipairs(PromptHeur.plantWhitelist) do if string.find(nm, good, 1, true) then return true end end
+		node = node.Parent
+	end
+	return false
+end
+local function makeOverlapParamsExcludeCharacter()
+	local params = OverlapParams.new()
+	params.FilterDescendantsInstances = {player.Character}
+	if Enum.RaycastFilterType and Enum.RaycastFilterType.Blacklist then params.FilterType = Enum.RaycastFilterType.Blacklist else params.FilterType = Enum.RaycastFilterType.Exclude end
+	return params
+end
+local function getNearbyPlantPrompts(radius)
+	local prompts = {}
+	local hrp = getHRP(); if not hrp then return prompts end
+	local params = makeOverlapParamsExcludeCharacter()
+	local parts = {}
+	pcall(function() parts = Workspace:GetPartBoundsInRadius(hrp.Position, radius, params) end)
+	local seenParents = {}
+	for _, part in ipairs(parts) do
+		if part and part.Parent and not seenParents[part.Parent] then
+			seenParents[part.Parent] = true
+			for _, child in ipairs(part.Parent:GetDescendants()) do
+				if child:IsA("ProximityPrompt") and isPlantPrompt(child) then table.insert(prompts, child) end
+			end
+		end
+	end
+	if #prompts == 0 then
+		for _, prompt in ipairs(Workspace:GetDescendants()) do
+			if prompt:IsA("ProximityPrompt") and isPlantPrompt(prompt) then
+				local root = prompt.Parent
+				local posPart = root and root:IsA("BasePart") and root or (root and root:FindFirstChildWhichIsA("BasePart"))
+				local h = getHRP()
+				if posPart and h and (posPart.Position - h.Position).Magnitude <= radius then table.insert(prompts, prompt) end
+			end
+		end
+	end
+	return prompts
+end
+local function safeFirePrompt(prompt, holdCap)
+	if HAS_FIRE_PROX then
+		local ok = pcall(function()
+			prompt.MaxActivationDistance = 2000
+			_FPP(prompt)
+			if prompt.HoldDuration and prompt.HoldDuration > 0 then
+				task.wait(math.min(holdCap or 0.25, prompt.HoldDuration))
+				_FPP(prompt)
+			end
+		end)
+		if ok then return end
+	end
+	VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game); task.wait(0.04)
+	VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+end
+
+-- =========================================================
+-- =================== AUTO HARVEST v2.4 ===================
+-- =========================================================
+local AutoHarv24 = {
+	enabled = false,
+	uiBtn   = nil,
+	config  = { radius=26, tick=0.12, holdCap=0.25, spamE=false, stopWhenBackpackFull=true },
+}
+function AutoHarv24:start()
+	if self.enabled then return end
+	self.enabled = true
+	if self.uiBtn and self.uiBtn.Parent then self.uiBtn.BackgroundColor3=Color3.fromRGB(100,180,80); self.uiBtn.Text=("🌾 Auto Harvest v2.4: ON  • r=%d"):format(self.config.radius) end
+	msg("🌾 AutoHarvest v2.4 ON — stop à backpack plein.", Color3.fromRGB(180,230,180))
+	task.spawn(function()
+		while self.enabled do
+			if self.config.stopWhenBackpackFull then
+				local full, c, m = isBackpackFull()
+				if full then
+					self.enabled = false
+					if self.uiBtn and self.uiBtn.Parent then self.uiBtn.BackgroundColor3=Color3.fromRGB(200,120,60); self.uiBtn.Text="🌾 Auto Harvest v2.4: OFF" end
+					msg(("⚠️ MAX BACKPACK SPACE (%s/%s) — AutoHarvest v2.4 OFF"):format(tostring(c or "?"), tostring(m or "?")), Color3.fromRGB(255,180,120))
+					break
+				end
+			end
+			local prompts = getNearbyPlantPrompts(self.config.radius)
+			for _, prompt in ipairs(prompts) do safeFirePrompt(prompt, self.config.holdCap) end
+			if self.config.spamE then VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game); task.wait(0.03); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game) end
+			task.wait(self.config.tick)
+		end
+	end)
+end
+function AutoHarv24:stop()
+	if not self.enabled then return end
+	self.enabled=false
+	if self.uiBtn and self.uiBtn.Parent then self.uiBtn.BackgroundColor3=Color3.fromRGB(200,120,60); self.uiBtn.Text="🌾 Auto Harvest v2.4: OFF" end
+	msg("🌾 AutoHarvest v2.4 OFF.", Color3.fromRGB(230,200,180))
+end
+
+-- =========================================================
+-- =============== AUTO HARVEST v4.3 (HOTFIX) ==============
+-- Hybride: PromptShown + scan périodique throttlé
+-- Modifs vs v4.2 :
+--  • tick plus LENT (0.30s) → moins de charge CPU
+--  • budget par passe réduit (6 prompts max)
+--  • cooldown prompt un peu plus long (0.25s)
+--  • aucune attente dans Heartbeat, pas de watchers lourds
+-- API inchangée: AutoHarv4:start() / :stop() / .uiBtn
+-- Dépend de fonctions/objets déjà présents dans ton script :
+--   isBackpackFull(), getNearbyPlantPrompts(), isPlantPrompt(),
+--   safeFirePrompt(), ProximityPromptService, VirtualInputManager,
+--   Players, msg
+-- =========================================================
+local AutoHarv4 = {
+	enabled=false, uiBtn=nil,
+	radius=28,            -- rayon de scan
+	tick=0.30,            -- ⬅️ cadence du scan (plus GRAND = moins fréquent = plus léger)
+	holdCap=0.22,         -- cap de maintien pour prompts "Hold"
+	spamE=false,          -- fallback E (désactivé par défaut)
+	promptCooldown=0.25,  -- anti-spam par prompt (sec)
+	stopWhenBackpackFull=true,
+
+	collected=0,
+	_cd={},               -- map cooldown par prompt
+	_shownConn=nil,
+	_trigConn=nil,
+	_loopThread=nil       -- thread de boucle (cancel safe)
+}
+
+local function ah4Cooldown(self, id)
+	local now = tick()
+	if self._cd[id] and (now - self._cd[id]) < self.promptCooldown then return true end
+	self._cd[id] = now
+	return false
+end
+
+local function promptId(p)
+	local id = tostring(p)
+	if typeof(p.GetDebugId) == "function" then
+		local ok, rid = pcall(function() return p:GetDebugId() end)
+		if ok and rid then id = rid end
+	end
+	return id
+end
+
+function AutoHarv4:_setBtn(on)
+	if not self.uiBtn or not self.uiBtn.Parent then return end
+	if on then
+		self.uiBtn.BackgroundColor3 = Color3.fromRGB(100,180,80)
+		self.uiBtn.Text = ("🌾 Auto Harvest v4: ON  •  %d"):format(self.collected or 0)
+	else
+		self.uiBtn.BackgroundColor3 = Color3.fromRGB(200,120,60)
+		self.uiBtn.Text = "🌾 Auto Harvest v4: OFF"
+	end
+end
+
+-- Une passe de scan limitée (évite spikes)
+function AutoHarv4:_scanOnce()
+	-- Stop si sac plein (via valeurs détectées par isBackpackFull())
+	if self.stopWhenBackpackFull then
+		local full = select(1, isBackpackFull())
+		if full then
+			self:stop(true)
+			msg("⚠️ MAX BACKPACK SPACE — AutoHarvest v4 OFF (valeurs)", Color3.fromRGB(255,180,120))
+			return
+		end
+	end
+
+	-- Récupère prompts autour du joueur et traite un budget max
+	local prompts = getNearbyPlantPrompts(self.radius)
+	local budget  = 6  -- ⬅️ budget réduit (limite le travail par tick)
+	for _, p in ipairs(prompts) do
+		if budget <= 0 then break end
+		if p and p.Parent and isPlantPrompt(p) then
+			local pid = promptId(p)
+			if not ah4Cooldown(self, pid) then
+				safeFirePrompt(p, self.holdCap)
+				budget -= 1
+			end
+		end
+	end
+
+	-- Fallback optionnel (désactivé par défaut)
+	if self.spamE then
+		VirtualInputManager:SendKeyEvent(true,  Enum.KeyCode.E, false, game)
+		task.wait(0.02)
+		VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+	end
+end
+
+function AutoHarv4:start()
+	if self.enabled then return end
+	self.enabled = true
+	self.collected = 0
+	self._cd = {}
+	self:_setBtn(true)
+	msg("🌾 AutoHarvest v4.3 ON — tick 0.30s + budget 6 + PromptShown.", Color3.fromRGB(180,230,180))
+
+	-- Réagit instantanément quand un prompt s’affiche
+	self._shownConn = ProximityPromptService.PromptShown:Connect(function(p)
+		if not self.enabled then return end
+		if not p or not p.Parent then return end
+		if not isPlantPrompt(p) then return end
+		local pid = promptId(p)
+		if not ah4Cooldown(self, pid) then
+			safeFirePrompt(p, self.holdCap)
+		end
+	end)
+
+	-- Compteur (facultatif)
+	self._trigConn = ProximityPromptService.PromptTriggered:Connect(function(p, plr)
+		if self.enabled and plr == Players.LocalPlayer and p and p.Parent and isPlantPrompt(p) then
+			self.collected += 1
+			self:_setBtn(true)
+		end
+	end)
+
+	-- Boucle dédiée (PAS de wait dans Heartbeat)
+	self._loopThread = task.spawn(function()
+		while self.enabled do
+			self:_scanOnce()
+			task.wait(self.tick)
+		end
+	end)
+end
+
+function AutoHarv4:stop(silent)
+	if not self.enabled then return end
+	self.enabled = false
+
+	if self._shownConn then self._shownConn:Disconnect() self._shownConn=nil end
+	if self._trigConn  then self._trigConn:Disconnect()  self._trigConn=nil end
+	if self._loopThread then task.cancel(self._loopThread) self._loopThread=nil end
+
+	self._cd = {}
+	self:_setBtn(false)
+	if not silent then msg("🌾 AutoHarvest v4.3 OFF.", Color3.fromRGB(230,200,180)) end
+end
+-- ================= END AUTO HARVEST v4.3 =================
+
+-- =========================================================
+-- ===================== MINI PANEL UI =====================
+-- =========================================================
+local miniPanelGui
+local function buildMiniPanel()
+	if miniPanelGui and miniPanelGui.Parent then return miniPanelGui end
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "SaadMiniPanel"
+	gui.ResetOnSpawn = false
+	gui.IgnoreGuiInset = false
+	gui.Parent = playerGui
+
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.fromOffset(380, 310)
+	frame.Position = UDim2.fromScale(0.02, 0.22)
+	frame.BackgroundColor3 = Color3.fromRGB(30,30,38)
+	frame.BorderSizePixel = 0
+	frame.Parent = gui
+	rounded(frame, 10)
+
+	local header = Instance.new("Frame")
+	header.Size = UDim2.new(1, 0, 0, 36)
+	header.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+	header.Parent = frame
+	rounded(header, 10)
+
+	local title = Instance.new("TextLabel")
+	title.Size = UDim2.new(1, -46, 1, 0)
+	title.Position = UDim2.new(0, 10, 0, 0)
+	title.BackgroundTransparency = 1
+	title.Text = "⚙️ Saad Mini Panel — v3.2"
+	title.TextColor3 = Color3.fromRGB(255,255,255)
+	title.Font = Enum.Font.GothamBold
+	title.TextSize = 14
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.Parent = header
+
+	local closeBtn = Instance.new("TextButton")
+	closeBtn.Size = UDim2.fromOffset(26, 26)
+	closeBtn.Position = UDim2.new(1, -32, 0.5, -13)
+	closeBtn.BackgroundColor3 = Color3.fromRGB(220, 70, 70)
+	closeBtn.TextColor3 = Color3.fromRGB(255,255,255)
+	closeBtn.Text = "✕"
+	closeBtn.Font = Enum.Font.GothamBold
+	closeBtn.TextSize = 14
+	closeBtn.Parent = header
+	rounded(closeBtn, 6)
+	closeBtn.MouseButton1Click:Connect(function() gui.Enabled=false end)
+
+	local container = Instance.new("Frame")
+	container.Size = UDim2.new(1, -14, 1, -46)
+	container.Position = UDim2.new(0, 7, 0, 42)
+	container.BackgroundTransparency = 1
+	container.Parent = frame
+
+	-- Row 1 : AutoHarvest v4 + Submit Cauldron
+	local row1 = Instance.new("Frame"); row1.Size = UDim2.new(1, 0, 0, 40); row1.BackgroundTransparency = 1; row1.Parent = container
+	local btnAutoV4 = Instance.new("TextButton")
+	btnAutoV4.Size = UDim2.new(0.48, -4, 1, 0); btnAutoV4.Position = UDim2.new(0, 0, 0, 0)
+	btnAutoV4.BackgroundColor3 = Color3.fromRGB(200, 120, 60); btnAutoV4.TextColor3 = Color3.fromRGB(255,255,255)
+	btnAutoV4.Text = "🌾 Auto Harvest v4: OFF"; btnAutoV4.Font = Enum.Font.GothamBold; btnAutoV4.TextSize = 13; btnAutoV4.Parent = row1; rounded(btnAutoV4, 8)
+	AutoHarv4.uiBtn = btnAutoV4
+
+	local btnSubmit = Instance.new("TextButton")
+	btnSubmit.Size = UDim2.new(0.52, 0, 1, 0); btnSubmit.Position = UDim2.new(0.48, 4, 0, 0)
+	btnSubmit.BackgroundColor3 = Color3.fromRGB(140, 110, 200); btnSubmit.TextColor3 = Color3.fromRGB(255,255,255)
+	btnSubmit.Text = "🧪 Submit All (Cauldron)"; btnSubmit.Font = Enum.Font.GothamBold; btnSubmit.TextSize = 13; btnSubmit.Parent = row1; rounded(btnSubmit, 8)
+
+	-- Row 2 : Event Seeds (Spooky)
+	local titleSeeds = Instance.new("TextLabel")
+	titleSeeds.Size = UDim2.new(1, 0, 0, 20); titleSeeds.Position = UDim2.new(0, 0, 0, 46)
+	titleSeeds.BackgroundTransparency = 1; titleSeeds.TextXAlignment = Enum.TextXAlignment.Left
+	titleSeeds.Text = "🎃 EVENT SEEDS (Spooky)"; titleSeeds.TextColor3 = Color3.fromRGB(255,235,180)
+	titleSeeds.Font = Enum.Font.GothamBold; titleSeeds.TextSize = 13; titleSeeds.Parent = container
+
+	local grid = Instance.new("Frame")
+	grid.Size = UDim2.new(1, 0, 0, 132); grid.Position = UDim2.new(0, 0, 0, 68)
+	grid.BackgroundTransparency = 1; grid.Parent = container
+
+	local function mkSeedBtn(xScale, yOff, name)
+		local b = Instance.new("TextButton")
+		b.Size = UDim2.new(0.48, -4, 0, 30)
+		b.Position = UDim2.new(xScale, xScale==0 and 0 or 4, 0, yOff)
+		b.BackgroundColor3 = Color3.fromRGB(150, 95, 160)
+		b.TextColor3 = Color3.fromRGB(255,255,255)
+		b.Text = "🛍️ "..name
+		b.Font = Enum.Font.GothamBold
+		b.TextSize = 12
+		b.Parent = grid
+		rounded(b, 8)
+		b.MouseButton1Click:Connect(function()
+			b.AutoButtonColor=false; b.BackgroundColor3=Color3.fromRGB(120, 75, 130)
+			task.spawn(function()
+				local r = safeWait({"GameEvents","BuyEventShopStock"},2) or safeWait({"GameEvents","FallMarketEvent","BuyEventShopStock"},2)
+				if not r or not r:IsA("RemoteEvent") then
+					msg("Remote BuyEventShopStock introuvable.", Color3.fromRGB(255,120,120))
+				else
+					local ok, err = pcall(function() r:FireServer(name, "Spooky Seeds") end)
+					if ok then msg("Achat Event Seed: "..name, Color3.fromRGB(180,230,180))
+					else msg("Échec Event Seed ("..name.."): "..tostring(err), Color3.fromRGB(255,160,140)) end
+				end
+			end)
+			task.delay(0.25, function() b.AutoButtonColor=true; b.BackgroundColor3=Color3.fromRGB(150, 95, 160) end)
+		end)
+	end
+	local EVENT_SEEDS = { "Bloodred Mushroom","Jack O Lantern","Ghoul Root","Chicken Feed","Seer Vine","Poison Apple" }
+	local col, row = 0, 0
+	for _, name in ipairs(EVENT_SEEDS) do
+		mkSeedBtn(col==0 and 0 or 0.52, row*34, name)
+		col = (col==0) and 1 or 0
+		if col==0 then row = row + 1 end
+	end
+
+	-- Row 3 : Toggles v2.4 + Hint
+	local row3 = Instance.new("Frame"); row3.Size = UDim2.new(1, 0, 0, 70); row3.Position = UDim2.new(0, 0, 0, 206); row3.BackgroundTransparency = 1; row3.Parent = container
+	local btnAutoV24 = Instance.new("TextButton")
+	btnAutoV24.Size = UDim2.new(1, 0, 0, 32)
+	btnAutoV24.BackgroundColor3 = Color3.fromRGB(200,120,60)
+	btnAutoV24.TextColor3 = Color3.fromRGB(255,255,255)
+	btnAutoV24.Text = "🌾 Auto Harvest v2.4: OFF"
+	btnAutoV24.Font = Enum.Font.GothamBold
+	btnAutoV24.TextSize = 13
+	btnAutoV24.Parent = row3
+	rounded(btnAutoV24, 8)
+	AutoHarv24.uiBtn = btnAutoV24
+
+	local hint = Instance.new("TextLabel")
+	hint.Size = UDim2.new(1, 0, 0, 26)
+	hint.Position = UDim2.new(0, 0, 0, 38)
+	hint.BackgroundTransparency = 1
+	hint.Text = "Raccourcis: H = v2.4 • J = v4 (hybride, + robuste)"
+	hint.TextColor3 = Color3.fromRGB(160, 200, 255)
+	hint.Font = Enum.Font.Gotham
+	hint.TextSize = 12
+	hint.Parent = row3
+
+	-- Binds
+	btnAutoV4.MouseButton1Click:Connect(function() if AutoHarv4.enabled then AutoHarv4:stop() else AutoHarv4:start() end end)
+	btnSubmit.MouseButton1Click:Connect(function()
+		local r = getWitchesSubmitRemote()
+		if not r then msg("WitchesBrew.SubmitItemToCauldron introuvable.", Color3.fromRGB(255,120,120)); return end
+		local ok, res = pcall(function() return r:InvokeServer("All") end)
+		if ok then msg("🧪 Cauldron: Submit All OK.", Color3.fromRGB(180,230,200))
+		else msg("Cauldron error: "..tostring(res), Color3.fromRGB(255,160,140)) end
+	end)
+	btnAutoV24.MouseButton1Click:Connect(function() if AutoHarv24.enabled then AutoHarv24:stop() else AutoHarv24:start() end end)
+
+	makeDraggable(frame, header)
+	applyAutoScale(gui, {frame})
+	miniPanelGui = gui
+	return gui
+end
+
+openMiniBtn.MouseButton1Click:Connect(function()
+	local g = buildMiniPanel()
+	g.Enabled = not g.Enabled
+end)
+
+-- Hotkeys
+UserInputService.InputBegan:Connect(function(input, gp)
+	if gp then return end
+	if input.KeyCode == Enum.KeyCode.H then
+		if AutoHarv24.enabled then AutoHarv24:stop() else AutoHarv24:start() end
+	elseif input.KeyCode == Enum.KeyCode.J then
+		if AutoHarv4.enabled then AutoHarv4:stop() else AutoHarv4:start() end
 	end
 end)
 
--- Bouton Player → Gear Panel (rappel forcé)
-gearBtn.MouseButton1Click:Connect(function() toggleGearPanel(true) end)
-
--- Fin — prêt
-msg("UI initialisée.")
+-- Ready
+msg("✅ Saad Helper Pack chargé • Auto-buy Seeds/Gear/Eggs: ON (60s) • ⌘/Ctrl+clic TP • Mini Panel ✕ • H=v2.4 • J=v4 (FIX).", Color3.fromRGB(170,230,255))
