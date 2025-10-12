@@ -8,8 +8,8 @@
 -- - Mini Panel v3.2 (✕ fermer) :
 --     • Auto Harvest v4 (hybride & robuste) — FIX (PromptShown + scan rayon)
 --     • Auto Harvest v2.4 (prompts) -> STOP auto si backpack plein (valeurs OU popup GUI)
---       • Allégé (rayon↓, tick↑, budget prompts, pas de scan global)
---       • Arrêt auto 3s après activation
+--       • ⚡ Remis en pleine puissance (+~50% vs original): tick 0.08, rayon 32, budget 12, fallback global ON
+--       • Arrêt auto 3s après activation (conservé)
 --     • Submit All (Cauldron)
 --     • Event Seeds (Spooky) par plante
 --     • 🎃 Submit Halloween → Jack (scan sac + mutations Spooky/Ghostly/Vamp) — *exclut eggs/gear*
@@ -58,7 +58,7 @@ local GEARS = {
 	"Watering Can","Trading Ticket","Trowel","Recall Wrench","Basic Sprinkler","Advanced Sprinkler",
 	"Medium Toy","Medium Treat","Godly Sprinkler","Magnifying Glass","Master Sprinkler",
 	"Cleaning Spray","Cleansing Pet Shard","Favorite Tool","Harvest Tool","Friendship Pot",
-	"Grandmaster Sprinkler","Level Up Lollipop" -- (on essaiera aussi "Levelup Lollipop")
+	"Grandmaster Sprinkler","Level Up Lollipop"
 }
 local EGGS = { "Common Egg","Uncommon Egg","Rare Egg","Legendary Egg","Mythical Egg","Bug Egg","Jungle Egg" }
 
@@ -70,7 +70,7 @@ local seedsTimer, gearTimer, eggsTimer = AUTO_PERIOD, AUTO_PERIOD, AUTO_PERIOD
 
 -- Anti-AFK state/threads
 local antiAFKEnabled = false
-local antiAFKBtn -- forward ref
+local antiAFKBtn
 local antiAFK_IdledConn = nil
 local antiAFKThread = nil
 
@@ -673,11 +673,9 @@ hintRow.Parent = content
 local function setAntiAFK(enabled)
 	if enabled == antiAFKEnabled then return end
 	antiAFKEnabled = enabled
-	-- UI
 	antiAFKBtn.Text = enabled and "🛡️ Anti-AFK: ON" or "🛡️ Anti-AFK: OFF"
 	antiAFKBtn.BackgroundColor3 = enabled and Color3.fromRGB(80,140,90) or Color3.fromRGB(100,130,100)
 
-	-- Idled connection
 	if antiAFK_IdledConn then antiAFK_IdledConn:Disconnect(); antiAFK_IdledConn = nil end
 	if enabled then
 		antiAFK_IdledConn = player.Idled:Connect(function()
@@ -688,7 +686,6 @@ local function setAntiAFK(enabled)
 		end)
 	end
 
-	-- Thread (nudge périodique)
 	if antiAFKThread then task.cancel(antiAFKThread); antiAFKThread = nil end
 	if enabled then
 		msg("🛡️ Anti-AFK activé (VirtualUser + micro-move périodique).", Color3.fromRGB(180,230,180))
@@ -717,7 +714,6 @@ antiAFKBtn.MouseButton1Click:Connect(function()
 end)
 
 -- ===== Boutons Player Tuner =====
-local resetBtn, noclipBtn, toggleGearBtn = resetBtn, noclipBtn, toggleGearBtn
 resetBtn.MouseButton1Click:Connect(function()
 	resetDefaults()
 	speedSlider.set(DEFAULT_WALKSPEED)
@@ -1042,8 +1038,6 @@ local PromptHeur = {
 	promptBlacklist = { "fence","save","slot","skin","shop","buy","sell","chest","settings","rename","open","claim","craft","upgrade" },
 }
 local function containsAny(s, list) for _, kw in ipairs(list) do if string.find(s, kw, 1, true) then return true end end return false end
-
--- ⚙️ Ajout: allowGlobalFallback (par défaut true). v2.4 l’utilise en false pour éviter un scan lourd du Workspace.
 local function isPlantPrompt(prompt)
 	if not prompt or not prompt.Parent then return false end
 	local action = lower(prompt.ActionText)
@@ -1117,13 +1111,14 @@ local function safeFirePrompt(prompt, holdCap)
 end
 
 -- =========================================================
--- =================== AUTO HARVEST v2.4 ===================
+-- =================== ⚡ AUTO HARVEST v2.4 =================
+-- ========== Pleine puissance (+~50% vs original) =========
 -- =========================================================
 local AutoHarv24 = {
 	enabled = false,
 	uiBtn   = nil,
-	-- 🔽 adouci: rayon ↓, tick ↑, holdCap ↓, budget ↑/↓ (4), no global scan
-	config  = { radius=22, tick=0.25, holdCap=0.18, spamE=false, stopWhenBackpackFull=true, budget=4 },
+	-- ⚡ Boost massif : tick↓ (0.08), rayon↑ (32), budget↑ (12), fallback global ON
+	config  = { radius=32, tick=0.08, holdCap=0.28, spamE=false, stopWhenBackpackFull=true, budget=12, globalFallback=true },
 }
 function AutoHarv24:start()
 	if self.enabled then return end
@@ -1132,7 +1127,7 @@ function AutoHarv24:start()
 		self.uiBtn.BackgroundColor3=Color3.fromRGB(100,180,80)
 		self.uiBtn.Text=("🌾 Auto Harvest v2.4: ON  • r=%d"):format(self.config.radius)
 	end
-	msg("🌾 AutoHarvest v2.4 ON — allégé (budget=4, tick=0.25, rayon=22) + arrêt auto 3s.", Color3.fromRGB(180,230,180))
+	msg("⚡ AutoHarvest v2.4 TURBO ON — tick 0.08 • r=32 • budget=12 • fallback=ON (auto-stop 3s).", Color3.fromRGB(180,230,180))
 
 	local startedAt = tick()
 	task.delay(3, function()
@@ -1155,9 +1150,9 @@ function AutoHarv24:start()
 					break
 				end
 			end
-			-- Pas de scan global → plus léger
-			local prompts = getNearbyPlantPrompts(self.config.radius, false)
-			local budget = self.config.budget or 4
+
+			local prompts = getNearbyPlantPrompts(self.config.radius, self.config.globalFallback ~= false)
+			local budget = self.config.budget or math.huge
 			local count = 0
 			for _, prompt in ipairs(prompts) do
 				if count >= budget then break end
@@ -1485,4 +1480,4 @@ end)
 -- Ready
 applyAutoScale(screenGui, {mainFrame})
 applyAutoScale(gearGui,   {gearFrame})
-msg("✅ Saad Helper Pack chargé • Auto-buy Seeds/Gear/Eggs: ON (60s) • ⌘/Ctrl+clic TP • Mini Panel ✕ • H=v2.4 (léger + auto-stop 3s) • J=v4 • 🎃 Jack Submit prêt (eggs exclus).", Color3.fromRGB(170,230,255))
+msg("✅ Saad Helper Pack chargé • Seeds/Gear/Eggs Auto: ON • ⌘/Ctrl+clic TP • Mini Panel ✕ • H=v2.4 ⚡ (auto-stop 3s) • J=v4 • 🎃 Jack Submit prêt.", Color3.fromRGB(170,230,255))
