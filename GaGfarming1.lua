@@ -6,11 +6,11 @@
 -- - Seeds inclut "Great Pumpkin" — auto-buy actif (BuySeedStock "Shop", <Seed>)
 -- - Bouton: Buy "Level Up Lollipop" x50 (essaie 2 noms possibles)
 -- - Mini Panel v3.2 (✕ fermer) :
---     • Auto Harvest v4 (hybride & robuste) — PromptShown + scan
---     • Auto Harvest v2.4 TURBO (50%+) — ⚠️ auto-stop 3s — PromptShown + scan
+--     • Auto Harvest v4 (hybride & robuste) — FIX (PromptShown + scan rayon)
+--     • Auto Harvest v2.4 (scan périodique) -> STOP auto 3s & backpack plein
 --     • Submit All (Cauldron)
 --     • Event Seeds (Spooky) par plante
---     • 🎃 Submit Halloween → Jack (scan sac + mutations Spooky/Ghostly/Vamp) — exclut eggs/gear
+--     • 🎃 Submit Halloween → Jack (scan sac + mutations Spooky/Ghostly/Vamp) — *exclut eggs/gear*
 -- - Raccourcis: H = toggle Auto Harvest v2.4 • J = toggle Auto Harvest v4
 -- =====================================================================
 
@@ -65,7 +65,7 @@ local isNoclipping, noclipConnection = false, nil
 local autoBuySeeds, autoBuyGear, autoBuyEggs = true, true, true
 local seedsTimer, gearTimer, eggsTimer = AUTO_PERIOD, AUTO_PERIOD, AUTO_PERIOD
 
--- Anti-AFK
+-- Anti-AFK (toggle)
 local antiAFKEnabled = false
 local antiAFKBtn
 local antiAFK_IdledConn, antiAFKThread = nil, nil
@@ -600,7 +600,7 @@ hintRow.Font = Enum.Font.Gotham; hintRow.TextSize = 12; hintRow.TextColor3 = Col
 hintRow.Text = "⌘/Ctrl + clic = TP • H: Harvest v2.4  •  J: Harvest v4 (hybride)"
 hintRow.Parent = content
 
--- Anti-AFK Manager
+-- Anti-AFK Manager (toggle fiable)
 local function setAntiAFK(enabled)
 	if enabled == antiAFKEnabled then return end
 	antiAFKEnabled = enabled
@@ -920,10 +920,9 @@ autoSeedsBtn.MouseButton1Click:Connect(function()
 	if autoBuySeeds then task.spawn(function() buyAllSeedsWorker(); seedsTimer=AUTO_PERIOD; updateTimerLabels() end) end
 	updateTimerLabels()
 end)
-
 local function toggleGear() gearFrame.Visible = not gearFrame.Visible; if gearFrame.Visible then clampOnScreen(gearFrame) end end
 gearClose.MouseButton1Click:Connect(function() gearFrame.Visible = false end)
-local toggleGearBtnCon; toggleGearBtnCon = toggleGearBtn.MouseButton1Click:Connect(toggleGear)
+toggleGearBtn.MouseButton1Click:Connect(toggleGear)
 
 -- live coords
 do
@@ -948,10 +947,10 @@ end
 local _FPP = (rawget(_G or getfenv(), "fireproximityprompt")) or _G.fireproximityprompt or _G.FireProximityPrompt or getfenv().fireproximityprompt or fireproximityprompt
 local HAS_FIRE_PROX = (typeof(_FPP) == "function")
 
--- 🔧 Heuristiques ajustées (plus permissives, plus de langues)
+-- 🔧 Heuristiques permissives (gardées du script actuel, stables)
 local PromptHeur = {
 	plantWhitelist = { "plant","harvest","crop","fruit","vegetable","tree","bush","flower","pick","collect","gather","récolte","récolter","cueillir" },
-	plantExclude   = { }, -- ❌ on ne filtre plus "mushroom/champignon"
+	plantExclude   = { }, -- pas d’exclusion dure (conserve le comportement robuste)
 	promptTextWhitelist = { "harvest","pick","collect","gather","récolter","cueillir" },
 	promptBlacklist = { "fence","save","slot","skin","shop","buy","sell","chest","settings","rename","open","claim","craft","upgrade" },
 }
@@ -1033,33 +1032,25 @@ local function safeFirePrompt(prompt, holdCap)
 		end)
 		return ok
 	end
-	-- variantes communes (true/1/0/sans arg)
 	if HAS_FIRE_PROX then
 		if tryFPP(true) or tryFPP(1) or tryFPP(0) or tryFPP(nil) then
 			if holdDur and holdDur > 0 then task.wait(math.min(hold, holdDur)); tryFPP(true) end
 			return
 		end
 	end
-	-- fallback: forcer HoldDuration à 0 côté client puis E
 	pcall(function() if prompt then prompt.HoldDuration = 0 end end)
 	VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game); task.wait(0.04)
 	VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
 end
 
 -- =========================================================
--- =================== ⚡ AUTO HARVEST v2.4 =================
--- ====== TURBO + PromptShown hook (+~50% puissance) =======
+-- =================== AUTO HARVEST v2.4 ===================
+-- ====== (version de ton script : scan + auto-stop 3s) ====
 -- =========================================================
 local AutoHarv24 = {
 	enabled = false,
 	uiBtn   = nil,
-	config  = {
-		radius=32, tick=0.08, holdCap=0.28,
-		spamE=false, stopWhenBackpackFull=true,
-		budget=12,
-		globalFallback=false -- 🔧 on s’appuie sur PromptShown pour l’instantané
-	},
-	_shownConn=nil, _loopThread=nil
+	config  = { radius=26, tick=0.12, holdCap=0.25, spamE=false, stopWhenBackpackFull=true },
 }
 function AutoHarv24:start()
 	if self.enabled then return end
@@ -1068,40 +1059,34 @@ function AutoHarv24:start()
 		self.uiBtn.BackgroundColor3=Color3.fromRGB(100,180,80)
 		self.uiBtn.Text=("🌾 Auto Harvest v2.4: ON  • r=%d"):format(self.config.radius)
 	end
-	msg("⚡ AutoHarvest v2.4 ON — PromptShown + scan; tick 0.08 • r=32 • budget=12 (auto-stop 3s).", Color3.fromRGB(180,230,180))
+	msg("🌾 AutoHarvest v2.4 ON — stop à backpack plein + arrêt auto 3s.", Color3.fromRGB(180,230,180))
 
-	-- arrêt auto 3s
+	-- ⏱️ Arrêt automatique après 3 secondes
 	local startedAt = tick()
 	task.delay(3, function()
-		if self.enabled and (tick() - startedAt) >= 2.9 then self:stop("arrêt auto 3s") end
+		if self.enabled and (tick() - startedAt) >= 2.9 then
+			self:stop("arrêt auto 3s")
+		end
 	end)
 
-	-- réaction immédiate aux prompts
-	self._shownConn = ProximityPromptService.PromptShown:Connect(function(p)
-		if not self.enabled then return end
-		if p and p.Parent and isPlantPrompt(p) then safeFirePrompt(p, self.config.holdCap) end
-	end)
-
-	-- boucle de scan rayon
-	self._loopThread = task.spawn(function()
+	task.spawn(function()
 		while self.enabled do
 			if self.config.stopWhenBackpackFull then
 				local full, c, m = isBackpackFull()
 				if full then
-					self:stop(("MAX BACKPACK SPACE (%s/%s)"):format(tostring(c or "?"), tostring(m or "?")))
+					self.enabled = false
+					if self.uiBtn and self.uiBtn.Parent then
+						self.uiBtn.BackgroundColor3=Color3.fromRGB(200,120,60)
+						self.uiBtn.Text="🌾 Auto Harvest v2.4: OFF"
+					end
+					msg(("⚠️ MAX BACKPACK SPACE (%s/%s) — AutoHarvest v2.4 OFF"):format(tostring(c or "?"), tostring(m or "?")), Color3.fromRGB(255,180,120))
 					break
 				end
 			end
-			local prompts = getNearbyPlantPrompts(self.config.radius, self.config.globalFallback)
-			local budget = self.config.budget or math.huge
-			local n = 0
-			for _, prompt in ipairs(prompts) do
-				if n >= budget then break end
-				safeFirePrompt(prompt, self.config.holdCap)
-				n = n + 1
-			end
+			local prompts = getNearbyPlantPrompts(self.config.radius)
+			for _, prompt in ipairs(prompts) do safeFirePrompt(prompt, self.config.holdCap) end
 			if self.config.spamE then
-				VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game); task.wait(0.02)
+				VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game); task.wait(0.03)
 				VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
 			end
 			task.wait(self.config.tick)
@@ -1111,14 +1096,16 @@ end
 function AutoHarv24:stop(reason)
 	if not self.enabled then return end
 	self.enabled=false
-	if self._shownConn then self._shownConn:Disconnect(); self._shownConn=nil end
-	if self._loopThread then task.cancel(self._loopThread); self._loopThread=nil end
-	if self.uiBtn and self.uiBtn.Parent then self.uiBtn.BackgroundColor3=Color3.fromRGB(200,120,60); self.uiBtn.Text="🌾 Auto Harvest v2.4: OFF" end
-	msg("🌾 AutoHarvest v2.4 OFF"..(reason and (" — "..tostring(reason)) or "")..".", Color3.fromRGB(230,200,180))
+	if self.uiBtn and self.uiBtn.Parent then
+		self.uiBtn.BackgroundColor3=Color3.fromRGB(200,120,60)
+		self.uiBtn.Text="🌾 Auto Harvest v2.4: OFF"
+	end
+	if reason then msg("🌾 AutoHarvest v2.4 OFF — "..tostring(reason)..".", Color3.fromRGB(230,200,180))
+	else msg("🌾 AutoHarvest v2.4 OFF.", Color3.fromRGB(230,200,180)) end
 end
 
 -- =========================================================
--- =============== AUTO HARVEST v4.3 (HOTFIX) ==============
+-- =============== AUTO HARVEST v4.3 (de ton script) =======
 -- =========================================================
 local AutoHarv4 = {
 	enabled=false, uiBtn=nil,
@@ -1130,7 +1117,7 @@ local function promptId(p) local id=tostring(p); if typeof(p.GetDebugId)=="funct
 function AutoHarv4:_setBtn(on) if not self.uiBtn or not self.uiBtn.Parent then return end if on then self.uiBtn.BackgroundColor3=Color3.fromRGB(100,180,80); self.uiBtn.Text=("🌾 Auto Harvest v4: ON  •  %d"):format(self.collected or 0) else self.uiBtn.BackgroundColor3=Color3.fromRGB(200,120,60); self.uiBtn.Text="🌾 Auto Harvest v4: OFF" end end
 function AutoHarv4:_scanOnce()
 	if self.stopWhenBackpackFull and select(1, isBackpackFull()) then self:stop(true); msg("⚠️ MAX BACKPACK SPACE — AutoHarvest v4 OFF", Color3.fromRGB(255,180,120)); return end
-	local prompts = getNearbyPlantPrompts(self.radius, true)
+	local prompts = getNearbyPlantPrompts(self.radius)
 	local budget  = 6
 	for _, p in ipairs(prompts) do
 		if budget <= 0 then break end
@@ -1316,7 +1303,8 @@ local function buildMiniPanel()
 		local r = getWitchesSubmitRemote()
 		if not r then msg("WitchesBrew.SubmitItemToCauldron introuvable.", Color3.fromRGB(255,120,120)); return end
 		local ok, res = pcall(function() return r:InvokeServer("All") end)
-		if ok then msg("🧪 Cauldron: Submit All OK.", Color3.fromRGB(180,230,200)) else msg("Cauldron error: "..tostring(res), Color3.fromRGB(255,160,140)) end
+		if ok then msg("🧪 Cauldron: Submit All OK.", Color3.fromRGB(180,230,200))
+		else msg("Cauldron error: "..tostring(res), Color3.fromRGB(255,160,140)) end
 	end)
 	btnAutoV24.MouseButton1Click:Connect(function() if AutoHarv24.enabled then AutoHarv24:stop() else AutoHarv24:start() end end)
 
@@ -1341,4 +1329,4 @@ end)
 -- Ready
 applyAutoScale(screenGui, {mainFrame})
 applyAutoScale(gearGui,   {gearFrame})
-msg("✅ Saad Helper Pack chargé • Seeds/Gear/Eggs Auto: ON • ⌘/Ctrl+clic TP • Mini Panel ✕ • H=v2.4 (PromptShown+scan, auto 3s) • J=v4 • 🎃 Jack Submit prêt.", Color3.fromRGB(170,230,255))
+msg("✅ Saad Helper Pack chargé • Auto-buy Seeds/Gear/Eggs: ON (60s) • ⌘/Ctrl+clic TP • Mini Panel ✕ • H=v2.4 (auto-stop 3s) • J=v4 • 🎃 Jack Submit prêt (eggs exclus).", Color3.fromRGB(170,230,255))
