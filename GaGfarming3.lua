@@ -10,7 +10,7 @@
 --     • Auto Harvest v2.4 (scan périodique) -> STOP auto 3s & backpack plein
 --     • Submit All (Cauldron) • Event Seeds (Spooky) • 🎃 Submit Halloween → Jack
 -- - Raccourcis: H = toggle Auto Harvest v2.4 • J = toggle Auto Harvest v5.5
--- - ▶️ Player Tuner: bouton VERT "🐾 Open Pet Freezer" (uniquement)
+-- - ▶️ Player Tuner: bouton "🌾 Open Harvest v5 Panel"
 -- =====================================================================
 
 --// Services
@@ -439,8 +439,9 @@ screenGui.ResetOnSpawn = false
 screenGui.IgnoreGuiInset = false
 screenGui.Parent = playerGui
 
+-- Hauteur ajustée (Pet row supprimée, v5 Panel conservé)
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.fromOffset(320, 392) -- +32px pour le nouveau bouton
+mainFrame.Size = UDim2.fromOffset(320, 392)
 mainFrame.Position = UDim2.fromScale(0.02, 0.04)
 mainFrame.BackgroundColor3 = Color3.fromRGB(36,36,36)
 mainFrame.BorderSizePixel = 0
@@ -549,10 +550,10 @@ local function createSlider(parent, y, labelText, minValue, maxValue, step, init
 	local dragging = false
 	local function updateFromX(x) local ap,as = track.AbsolutePosition.X, track.AbsoluteSize.X; if as<=0 then return end; local pct = math.max(0, math.min(1, (x-ap)/as)); local val = minValue + pct*(maxValue-minValue); setValue(val, true) end
 	track.InputBegan:Connect(function(i)
-		if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=true; updateFromX(i.Position.X) i.Changed:Connect(function() if i.UserInputState==Enum.UserInputState.End then dragging=false; clampOnScreen(frame) end end) end
+		if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=true; updateFromX(i.Position.X) i.Changed:Connect(function() if i.UserInputState==Enum.UserInputState.End then dragging=false; clampOnScreen(mainFrame) end end) end
 	end)
 	knob.InputBegan:Connect(function(i)
-		if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=true; updateFromX(i.Position.X) i.Changed:Connect(function() if i.UserInputState==Enum.UserInputState.End then dragging=false; clampOnScreen(frame) end end) end
+		if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=true; updateFromX(i.Position.X) i.Changed:Connect(function() if i.UserInputState==Enum.UserInputState.End then dragging=false; clampOnScreen(mainFrame) end end) end
 	end)
 	UserInputService.InputChanged:Connect(function(i)
 		if dragging and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then updateFromX(i.Position.X) end
@@ -591,19 +592,19 @@ openMiniBtn.Size = UDim2.new(0.52, 0, 1, 0); openMiniBtn.Position = UDim2.new(0.
 openMiniBtn.BackgroundColor3 = Color3.fromRGB(140, 110, 200); openMiniBtn.TextColor3 = Color3.fromRGB(255,255,255)
 openMiniBtn.Text = "⚙️ Open Saad Mini Panel"; openMiniBtn.Font = Enum.Font.GothamBold; openMiniBtn.TextSize = 13; openMiniBtn.Parent = miscRow; rounded(openMiniBtn,8)
 
--- Row 3: Pet Freezer (VERT uniquement)
-local petRow = Instance.new("Frame"); petRow.Size = UDim2.new(1, 0, 0, 36); petRow.Position = UDim2.new(0, 0, 0, 272); petRow.BackgroundTransparency = 1; petRow.Parent = content
-local openPetBtn = Instance.new("TextButton")
-openPetBtn.Size = UDim2.new(1, 0, 1, 0); openPetBtn.Position = UDim2.new(0, 0, 0, 0)
-openPetBtn.BackgroundColor3 = Color3.fromRGB(35,150,90)
-openPetBtn.TextColor3 = Color3.fromRGB(255,255,255)
-openPetBtn.Text = "🐾 Open Pet Freezer"
-openPetBtn.Font = Enum.Font.GothamBold
-openPetBtn.TextSize = 13
-openPetBtn.Parent = petRow
-rounded(openPetBtn,8)
+-- Row 3: Ouvrir Panel v5.5 (remonté)
+local v5Row = Instance.new("Frame"); v5Row.Size = UDim2.new(1, 0, 0, 36); v5Row.Position = UDim2.new(0, 0, 0, 272); v5Row.BackgroundTransparency = 1; v5Row.Parent = content
+local openV5Btn = Instance.new("TextButton")
+openV5Btn.Size = UDim2.new(1, 0, 1, 0); openV5Btn.Position = UDim2.new(0, 0, 0, 0)
+openV5Btn.BackgroundColor3 = Color3.fromRGB(90,120,210)
+openV5Btn.TextColor3 = Color3.fromRGB(255,255,255)
+openV5Btn.Text = "🌾 Open Harvest v5 Panel"
+openV5Btn.Font = Enum.Font.GothamBold
+openV5Btn.TextSize = 13
+openV5Btn.Parent = v5Row
+rounded(openV5Btn,8)
 
--- Row 4: Hint
+-- Row 4: Hint (remonté)
 local hintRow = Instance.new("TextLabel")
 hintRow.Size = UDim2.new(1, 0, 0, 22); hintRow.Position = UDim2.new(0, 0, 0, 308)
 hintRow.BackgroundTransparency = 1; hintRow.TextXAlignment = Enum.TextXAlignment.Left
@@ -1115,11 +1116,11 @@ do
 	local LP = Players.LocalPlayer
 
 	--============= Utils =============--
-	local function notify(msg, dur)
+	local function notify(txt, dur)
 		pcall(function()
-			StarterGui:SetCore("SendNotification", { Title = "AutoHarvest v5.5", Text  = tostring(msg), Duration = dur or 2 })
+			StarterGui:SetCore("SendNotification", { Title = "AutoHarvest v5.5", Text  = tostring(txt), Duration = dur or 2 })
 		end)
-		print("[AutoHarvest]", msg)
+		print("[AutoHarvest]", txt)
 	end
 	local function getChar()
 		local ch = LP.Character or LP.CharacterAdded:Wait()
@@ -1132,6 +1133,7 @@ do
 		return hum and hum.Health > 0
 	end
 	local function vdist(a, b) return (a-b).Magnitude end
+	local function containsAnyStrict(s, list) for _,w in ipairs(list) do if s:find(w, 1, true) then return true end end return false end
 
 	--============= Config/State =============--
 	local CONFIG = {
@@ -1164,6 +1166,7 @@ do
 		collectSender = nil,
 		ALL_PROMPTS = {},
 		IS_IN_SET = {},
+		ui = nil,
 	}
 
 	-- prompt cache
@@ -1202,8 +1205,6 @@ do
 		STATE.collectSender = false
 	end
 
-	-- small helpers
-	local function sContainsAny(s, list) for _,w in ipairs(list) do if s:find(w, 1, true) then return true end end return false end
 	local function labelFor(pp)
 		local names = {}
 		if pp.Parent then names[#names+1] = pp.Parent.Name end
@@ -1223,16 +1224,15 @@ do
 		local action = (pp.ActionText or ""):lower()
 		local object = (pp.ObjectText or ""):lower()
 		if action == "" and object == "" then object = labelFor(pp):lower() end
-		if sContainsAny(action, NEG_ACTION) or sContainsAny(object, NEG_ACTION) then return false end
+		if containsAnyStrict(action, NEG_ACTION) or containsAnyStrict(object, NEG_ACTION) then return false end
 		if action:find("harvest", 1, true) then return true end
 		if action:find("collect", 1, true) or action:find("pick", 1, true) or action:find("gather", 1, true) then
 			if STATE.halloweenOnly then return passHalloween(pp) end
 			local l = (object ~= "" and object) or labelFor(pp):lower()
-			return sContainsAny(l, FRUIT_KEYWORDS)
+			return containsAnyStrict(l, FRUIT_KEYWORDS)
 		end
 		return false
 	end
-
 	local function firePrompt(pp)
 		pcall(function() pp.HoldDuration = 0; pp.RequiresLineOfSight = false; pp.MaxActivationDistance = math.huge end)
 		local ok = false
@@ -1344,6 +1344,93 @@ do
 	end
 	function AutoHarv5.start() if not STATE.enabled then AutoHarv5.toggle() end end
 	function AutoHarv5.stop()  if STATE.enabled then AutoHarv5.toggle()  end end
+
+	-- ========= UI DÉDIÉE v5.5 =========
+	local function buildUI()
+		if STATE.ui and STATE.ui.Parent then STATE.ui.Enabled = true; return STATE.ui end
+		local pg  = LP:WaitForChild("PlayerGui")
+		local gui = Instance.new("ScreenGui"); gui.Name = "Saad_AutoHarvest_v55"; gui.IgnoreGuiInset = true; gui.ResetOnSpawn = false; gui.Parent = pg
+
+		local frame = Instance.new("Frame"); frame.Size = UDim2.new(0, 348, 0, 214); frame.Position = UDim2.new(0, 20, 0, 80); frame.BackgroundColor3 = Color3.fromRGB(22,22,26); frame.BorderSizePixel = 0; frame.Parent = gui
+		Instance.new("UICorner", frame).CornerRadius = UDim.new(0,12)
+
+		local title = Instance.new("TextLabel"); title.BackgroundTransparency = 1; title.Size = UDim2.new(1, -40, 0, 28); title.Position = UDim2.new(0, 12, 0, 6); title.Text = "🌾 Auto-Harvest v5.5"; title.TextColor3 = Color3.fromRGB(235,235,245); title.Font = Enum.Font.GothamBold; title.TextXAlignment = Enum.TextXAlignment.Left; title.TextSize = 18; title.Parent = frame
+
+		local closeBtn = Instance.new("TextButton"); closeBtn.Size = UDim2.new(0, 28, 0, 28); closeBtn.Position = UDim2.new(1, -32, 0, 6); closeBtn.BackgroundColor3 = Color3.fromRGB(45,45,55); closeBtn.Text = "✕"; closeBtn.TextColor3 = Color3.fromRGB(235,235,245); closeBtn.Font = Enum.Font.Gotham; closeBtn.TextSize = 16; closeBtn.Parent = frame
+		Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0,8)
+		closeBtn.MouseButton1Click:Connect(function() gui.Enabled = false end)
+
+		-- drag
+		local dragging, dragStart, startPos = false, nil, nil
+		frame.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				dragging = true; dragStart = input.Position; startPos  = frame.Position
+			end
+		end)
+		UserInputService.InputEnded:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
+		end)
+		UserInputService.InputChanged:Connect(function(input)
+			if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+				local delta = input.Position - dragStart
+				frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+			end
+		end)
+
+		local function toggleRow(y, label, default, cb)
+			local holder = Instance.new("Frame"); holder.Size = UDim2.new(1, -24, 0, 28); holder.Position = UDim2.new(0, 12, 0, y); holder.BackgroundTransparency = 1; holder.Parent = frame
+			local btn = Instance.new("TextButton"); btn.Size = UDim2.new(0, 28, 0, 28); btn.BackgroundColor3 = default and Color3.fromRGB(73,167,88) or Color3.fromRGB(70,70,78); btn.Text = ""; btn.Parent = holder; Instance.new("UICorner", btn).CornerRadius = UDim.new(0,8)
+			local lb = Instance.new("TextLabel"); lb.Size = UDim2.new(1, -40, 1, 0); lb.Position = UDim2.new(0, 40, 0, 0); lb.BackgroundTransparency = 1; lb.Text = label; lb.TextColor3 = Color3.fromRGB(220,220,230); lb.Font = Enum.Font.Gotham; lb.TextXAlignment = Enum.TextXAlignment.Left; lb.TextSize = 16; lb.Parent = holder
+			local state = default
+			btn.MouseButton1Click:Connect(function() state = not state; btn.BackgroundColor3 = state and Color3.fromRGB(73,167,88) or Color3.fromRGB(70,70,78); pcall(cb, state) end)
+			pcall(cb, default)
+			return holder
+		end
+
+		local y = 40
+		toggleRow(y, "Activer Auto-Harvest", false, function(on) STATE.enabled = on; if on then STATE.runCount = 0; task.spawn(mainLoop) end end); y = y + 32
+		toggleRow(y, "Mode Turbo (cadence ++)", true, function(on) STATE.turbo = on end); y = y + 32
+		toggleRow(y, "Harvest Halloween ONLY", false, function(on) STATE.halloweenOnly = on end); y = y + 32
+
+		-- Limite
+		local limitRow = Instance.new("Frame"); limitRow.Size = UDim2.new(1, -24, 0, 28); limitRow.Position = UDim2.new(0, 12, 0, y); limitRow.BackgroundTransparency = 1; limitRow.Parent = frame
+		local limMinus = Instance.new("TextButton"); limMinus.Size = UDim2.new(0, 28, 0, 28); limMinus.Text = "−"; limMinus.Font = Enum.Font.GothamBold; limMinus.TextColor3 = Color3.fromRGB(235,235,245); limMinus.BackgroundColor3 = Color3.fromRGB(70,70,78); limMinus.Parent = limitRow; Instance.new("UICorner", limMinus).CornerRadius = UDim.new(0,8)
+		local limPlus = Instance.new("TextButton"); limPlus.Size = UDim2.new(0, 28, 0, 28); limPlus.Position = UDim2.new(1, -92, 0, 0); limPlus.Text = "+"; limPlus.Font = Enum.Font.GothamBold; limPlus.TextColor3 = Color3.fromRGB(235,235,245); limPlus.BackgroundColor3 = Color3.fromRGB(70,70,78); limPlus.Parent = limitRow; Instance.new("UICorner", limPlus).CornerRadius = UDim.new(0,8)
+		local limReset = Instance.new("TextButton"); limReset.Size = UDim2.new(0, 60, 0, 28); limReset.Position = UDim2.new(1, -60, 0, 0); limReset.Text = "Reset"; limReset.Font = Enum.Font.Gotham; limReset.TextColor3 = Color3.fromRGB(235,235,245); limReset.BackgroundColor3 = Color3.fromRGB(45,45,55); limReset.Parent = limitRow; Instance.new("UICorner", limReset).CornerRadius = UDim.new(0,8)
+		local limLabel = Instance.new("TextLabel"); limLabel.BackgroundTransparency = 1; limLabel.Position = UDim2.new(0, 36, 0, 0); limLabel.Size = UDim2.new(1, -140, 1, 0); limLabel.Font = Enum.Font.Gotham; limLabel.TextColor3 = Color3.fromRGB(220,220,230); limLabel.TextXAlignment = Enum.TextXAlignment.Left; limLabel.TextSize = 16; limLabel.Parent = limitRow
+		local function refreshLimit() limLabel.Text = ("Limite: %d  |  Run: %d/%d"):format(STATE.runLimit, STATE.runCount, STATE.runLimit) end
+		refreshLimit()
+		limMinus.MouseButton1Click:Connect(function() STATE.runLimit = math.max(10, STATE.runLimit - 10); refreshLimit() end)
+		limPlus.MouseButton1Click:Connect(function() STATE.runLimit = math.min(1000, STATE.runLimit + 10); refreshLimit() end)
+		limReset.MouseButton1Click:Connect(function() STATE.runCount = 0; refreshLimit() end)
+
+		-- Rayon
+		y = y + 32
+		local radRow = Instance.new("Frame"); radRow.Size = UDim2.new(1, -24, 0, 28); radRow.Position = UDim2.new(0, 12, 0, y); radRow.BackgroundTransparency = 1; radRow.Parent = frame
+		local radMinus = Instance.new("TextButton"); radMinus.Size = UDim2.new(0, 28, 0, 28); radMinus.Text = "−"; radMinus.Font = Enum.Font.GothamBold; radMinus.TextColor3 = Color3.fromRGB(235,235,245); radMinus.BackgroundColor3 = Color3.fromRGB(70,70,78); radMinus.Parent = radRow; Instance.new("UICorner", radMinus).CornerRadius = UDim.new(0,8)
+		local radPlus = Instance.new("TextButton"); radPlus.Size = UDim2.new(0, 28, 0, 28); radPlus.Position = UDim2.new(1, -92, 0, 0); radPlus.Text = "+"; radPlus.Font = Enum.Font.GothamBold; radPlus.TextColor3 = Color3.fromRGB(235,235,245); radPlus.BackgroundColor3 = Color3.fromRGB(70,70,78); radPlus.Parent = radRow; Instance.new("UICorner", radPlus).CornerRadius = UDim.new(0,8)
+		local radLabel = Instance.new("TextLabel"); radLabel.BackgroundTransparency = 1; radLabel.Position = UDim2.new(0, 36, 0, 0); radLabel.Size = UDim2.new(1, -100, 1, 0); radLabel.Font = Enum.Font.Gotham; radLabel.TextColor3 = Color3.fromRGB(220,220,230); radLabel.TextXAlignment = Enum.TextXAlignment.Left; radLabel.TextSize = 16; radLabel.Parent = radRow
+		local function refreshRadius() radLabel.Text = ("Rayon de scan: %dst"):format(STATE.scanRadius) end
+		refreshRadius()
+		radMinus.MouseButton1Click:Connect(function() STATE.scanRadius = math.max(50, STATE.scanRadius - 25); refreshRadius() end)
+		radPlus.MouseButton1Click:Connect(function() STATE.scanRadius = math.min(600, STATE.scanRadius + 25); refreshRadius() end)
+
+		-- stats
+		local stats = Instance.new("TextLabel"); stats.Size = UDim2.new(1, -24, 0, 22); stats.Position = UDim2.new(0, 12, 1, -26); stats.BackgroundTransparency = 1
+		stats.Text = "Scan: 0 | Harvest: 0"; stats.TextColor3 = Color3.fromRGB(150,150,160); stats.Font = Enum.Font.Code; stats.TextXAlignment = Enum.TextXAlignment.Left; stats.TextSize = 14; stats.Parent = frame
+		RunService.RenderStepped:Connect(function()
+			stats.Text = string.format("Scan:%d | Harvest:%d | Run:%d/%d %s", STATE.stats.scanned or 0, STATE.stats.harvested or 0, STATE.runCount or 0, STATE.runLimit or 0, STATE.halloweenOnly and "🎃" or "🌱")
+			limLabel.Text = ("Limite: %d  |  Run: %d/%d"):format(STATE.runLimit, STATE.runCount, STATE.runLimit)
+		end)
+
+		STATE.ui = gui
+		return gui
+	end
+
+	function AutoHarv5.openUI()
+		local g = buildUI()
+		if g then g.Enabled = true end
+	end
 end
 
 -- =========================================================
@@ -1527,297 +1614,8 @@ end
 
 openMiniBtn.MouseButton1Click:Connect(function() local g = buildMiniPanel(); g.Enabled = not g.Enabled end)
 
--- =========================================================
--- ============== PET FREEZER (PetMover UI) ================
--- =========================================================
-local PetFreezer = { ready=false, sg=nil, frame=nil, show=nil, toggle=nil }
-do
-	local function BuildPetFreezer()
-		if PetFreezer.ready and PetFreezer.sg and PetFreezer.sg.Parent then return end
-
-		local Players = game:GetService("Players")
-		local UIS     = game:GetService("UserInputService")
-		local SG      = game:GetService("StarterGui")
-		local RS      = game:GetService("RunService")
-		local LP      = Players.LocalPlayer
-
-		local function notify(msg)
-			pcall(function() SG:SetCore("SendNotification", {Title="PetMover", Text=tostring(msg), Duration=2}) end)
-			print("[PetMover]", msg)
-		end
-		local function getChar()
-			local ch = LP.Character or LP.CharacterAdded:Wait()
-			ch:WaitForChild("HumanoidRootPart"); ch:WaitForChild("Humanoid")
-			return ch
-		end
-		local function anyCFrame(inst)
-			if inst:IsA("Model") then
-				local ok, cf = pcall(function() return inst:GetPivot() end)
-				if ok and typeof(cf)=="CFrame" then return cf end
-				if inst.PrimaryPart then return inst.PrimaryPart.CFrame end
-				for _,d in ipairs(inst:GetDescendants()) do if d:IsA("BasePart") then return d.CFrame end end
-			elseif inst:IsA("BasePart") then
-				return inst.CFrame
-			else
-				for _,d in ipairs(inst:GetDescendants()) do if d:IsA("BasePart") then return d.CFrame end end
-			end
-			return CFrame.new()
-		end
-		local function pivotTo(root, cf)
-			if root:IsA("Model") then
-				local ok = pcall(function() root:PivotTo(cf) end)
-				if not ok then
-					local parts = {}
-					for _,d in ipairs(root:GetDescendants()) do if d:IsA("BasePart") then table.insert(parts, d) end end
-					local primary = root.PrimaryPart or parts[1]
-					if primary then
-						local delta = cf * primary.CFrame:Inverse()
-						for _,p in ipairs(parts) do p.CFrame = delta * p.CFrame end
-					end
-				end
-			elseif root:IsA("BasePart") then
-				root.CFrame = cf
-			end
-		end
-		local function rootUnderFolder(inst, folder)
-			local p = inst
-			while p and p.Parent and p.Parent ~= folder do p = p.Parent end
-			if p and p.Parent == folder then return p end
-			return nil
-		end
-		local function matchesOwnerValue(val)
-			if val == nil then return false end
-			local myName  = LP.Name
-			local myId    = LP.UserId
-			local t = typeof(val)
-			if t == "string" then return (val == myName or val == tostring(myId))
-			elseif t == "number" then return (val == myId)
-			elseif t == "Instance" then return (val.Name == myName)
-			end
-			return false
-		end
-		local OWNER_KEYS = {"Owner","owner","OWNER"}
-		local function hasOwnerAttrMatch(inst)
-			for _,k in ipairs(OWNER_KEYS) do
-				local ok, v = pcall(function() return inst:GetAttribute(k) end)
-				if ok and v ~= nil and matchesOwnerValue(v) then return true, k, v end
-			end
-			local sv = inst:FindFirstChild("Owner")
-			if sv then
-				if sv:IsA("StringValue") and matchesOwnerValue(sv.Value) then return true, "StringValue", sv.Value end
-				if sv:IsA("ObjectValue") and matchesOwnerValue(sv.Value) then return true, "ObjectValue", sv.Value end
-				if sv:IsA("IntValue")   and matchesOwnerValue(sv.Value) then return true, "IntValue", sv.Value end
-			end
-			return false
-		end
-		local function nameLooksLikePetMover(s)
-			if not s or s=="" then return false end
-			s = s:lower()
-			if s:find("petmover") then return true end
-			if s:find("mover") and s:find("pet") then return true end
-			return false
-		end
-		local function findPetMoverDescendant(root)
-			if nameLooksLikePetMover(root.Name) then return root end
-			for _,d in ipairs(root:GetDescendants()) do if nameLooksLikePetMover(d.Name) then return d end end
-			return nil
-		end
-		local GAP_MULTIPLIER = 0.95
-		local MIN_RADIUS     = 0.8
-		local Y_OFFSET_PET   = 0.20
-		local function getModelDiameter(root)
-			if root:IsA("Model") then
-				local ok,size = pcall(function() return root:GetExtentsSize() end)
-				if ok and size then return math.max(size.X, size.Z) end
-				if root.PrimaryPart then local s = root.PrimaryPart.Size; return math.max(s.X, s.Z) end
-			elseif root:IsA("BasePart") then
-				local s = root.Size
-				return math.max(s.X, s.Z)
-			end
-			return 2.0
-		end
-
-		local PETS = {}
-		local function scanPets()
-			PETS = {}
-			local petsFolder = workspace:FindFirstChild("PetsPhysical") or workspace:FindFirstChild("petsphysical") or workspace:FindFirstChild("Pets_Physical")
-			if not petsFolder then notify("workspace.PetsPhysical introuvable"); return end
-			local seen = {}
-			for _,child in ipairs(petsFolder:GetChildren()) do
-				local mover = findPetMoverDescendant(child)
-				if mover then
-					local ownMover = hasOwnerAttrMatch(mover)
-					local ownRoot  = hasOwnerAttrMatch(child)
-					if ownMover or ownRoot then
-						local root = rootUnderFolder(mover, petsFolder) or child
-						if root and not seen[root] then
-							seen[root] = true
-							table.insert(PETS, { root = root, mover = mover, name  = tostring(root.Name), frozen = false, targetCF = anyCFrame(root) })
-						end
-					end
-				end
-			end
-			if #PETS == 0 then
-				for _,d in ipairs(petsFolder:GetDescendants()) do
-					if nameLooksLikePetMover(d.Name) and hasOwnerAttrMatch(d) then
-						local root = rootUnderFolder(d, petsFolder) or d
-						if root and not seen[root] then
-							seen[root] = true
-							table.insert(PETS, { root = root, mover = d, name  = tostring(root.Name), frozen = false, targetCF = anyCFrame(root) })
-						end
-					end
-				end
-			end
-			table.sort(PETS, function(a,b) return a.name < b.name end)
-			notify("Pets détectés: "..tostring(#PETS))
-		end
-
-		local freezeConn = nil
-		local function ensureFreezeLoop()
-			if freezeConn then return end
-			freezeConn = RS.Heartbeat:Connect(function()
-				for _,p in ipairs(PETS) do if p.frozen and p.targetCF then pivotTo(p.root, p.targetCF) end end
-			end)
-		end
-		local function maybeStopLoop()
-			for _,p in ipairs(PETS) do if p.frozen then return end end
-			if freezeConn then freezeConn:Disconnect(); freezeConn=nil end
-		end
-		local function freezeHereAll()
-			if #PETS == 0 then notify("Aucun pet — clique « Scanner »"); return end
-			for _,p in ipairs(PETS) do p.targetCF = anyCFrame(p.root); p.frozen = true end
-			ensureFreezeLoop(); notify("Freeze ici : "..tostring(#PETS).." pets gelés")
-		end
-		local function bringToMeAndFreezeAll()
-			if #PETS == 0 then notify("Aucun pet — clique « Scanner »"); return end
-			local hrp    = getChar().HumanoidRootPart
-			local origin = hrp.CFrame
-			local sumD  = 0
-			local diams = {}
-			for i,p in ipairs(PETS) do local d = getModelDiameter(p.root); if d <= 0 then d = 2 end; d = d * GAP_MULTIPLIER; diams[i] = d; sumD += d end
-			local radius = math.max(MIN_RADIUS, sumD / (2 * math.pi))
-			local angle = 0
-			for i,p in ipairs(PETS) do
-				local d   = diams[i]
-				local x   = math.cos(angle) * radius
-				local z   = math.sin(angle) * radius
-				local pos = origin.Position + Vector3.new(x, Y_OFFSET_PET, z)
-				local cf  = CFrame.new(pos, origin.Position + origin.LookVector)
-				pivotTo(p.root, cf); p.targetCF = cf; p.frozen = true
-				angle = angle + (d / radius)
-			end
-			ensureFreezeLoop()
-			notify(("TP vers toi + Freeze (ultra-serré) : %d pets • R=%.2f"):format(#PETS, radius))
-		end
-		local function unfreezeAll() for _,p in ipairs(PETS) do p.frozen=false end; maybeStopLoop(); notify("Unfreeze : tous les pets libérés") end
-
-		local pg = playerGui
-		local sg = Instance.new("ScreenGui"); sg.Name = "Saad_PetMover_UI"; sg.IgnoreGuiInset = true; sg.ResetOnSpawn = false; sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling; sg.DisplayOrder = 10000; sg.Parent = pg
-		local reopen = Instance.new("TextButton", sg); reopen.Name="Reopen"; reopen.Visible=false; reopen.Text="🐾"; reopen.TextScaled=true; reopen.Size=UDim2.fromOffset(56,56); reopen.Position=UDim2.fromOffset(16, sg.AbsoluteSize.Y-72); reopen.BackgroundColor3=Color3.fromRGB(35,150,90); reopen.TextColor3=Color3.fromRGB(245,245,250); Instance.new("UICorner", reopen).CornerRadius = UDim.new(0,16)
-		sg:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() reopen.Position = UDim2.fromOffset(16, sg.AbsoluteSize.Y - 72) end)
-
-		local frame = Instance.new("Frame", sg); frame.Name="Main"; frame.Active=true; frame.Size=UDim2.fromOffset(640, 520); frame.Position=UDim2.fromOffset(120, 120); frame.BackgroundColor3=Color3.fromRGB(24,24,28); Instance.new("UICorner", frame).CornerRadius = UDim.new(0,16)
-		local titleBar = Instance.new("Frame", frame); titleBar.Size = UDim2.new(1,0,0,44); titleBar.BackgroundColor3 = Color3.fromRGB(32,32,38); Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0,16)
-		local title = Instance.new("TextLabel", titleBar); title.BackgroundTransparency=1; title.Size=UDim2.new(1,-140,1,0); title.Position=UDim2.fromOffset(12,0); title.Text="🐾 PetMover — Freeze ici / TP vers moi + Freeze / Unfreeze"; title.TextScaled=true; title.Font=Enum.Font.SourceSansBold; title.TextColor3=Color3.fromRGB(235,235,240)
-		local closeBtn = Instance.new("TextButton", titleBar); closeBtn.Text="✕"; closeBtn.TextScaled=true; closeBtn.Size=UDim2.fromOffset(40,40); closeBtn.Position=UDim2.new(1,-44,0,2); closeBtn.BackgroundColor3=Color3.fromRGB(60,25,25); closeBtn.TextColor3=Color3.fromRGB(245,245,250); Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0,12)
-
-		do
-			local dragging=false; local dragStart; local startPos
-			local function upd(i) local d=i.Position-dragStart; frame.Position=UDim2.fromOffset(startPos.X.Offset+d.X, startPos.Y.Offset+d.Y) end
-			titleBar.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=true; dragStart=i.Position; startPos=frame.Position end end)
-			UIS.InputChanged:Connect(function(i) if dragging and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then upd(i) end end)
-			UIS.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=false end end)
-		end
-
-		local content = Instance.new("Frame", frame); content.BackgroundTransparency=1; content.Size=UDim2.new(1,-20,1,-60); content.Position=UDim2.fromOffset(10,54)
-		local left = Instance.new("Frame", content);  left.BackgroundTransparency=1; left.Size=UDim2.new(0.46,-6,1,0); left.Position=UDim2.fromOffset(0,0)
-		local right = Instance.new("Frame", content); right.BackgroundTransparency=1; right.Size=UDim2.new(0.54,0,1,0);  right.Position=UDim2.new(0.46,6,0,0)
-		local lList = Instance.new("UIListLayout", left); lList.Padding = UDim.new(0,8)
-
-		local pathLbl = Instance.new("TextLabel", left); pathLbl.BackgroundTransparency=0.15; pathLbl.BackgroundColor3=Color3.fromRGB(30,30,36); pathLbl.Text="Chemin: workspace.PetsPhysical"; pathLbl.TextScaled=true; pathLbl.Font=Enum.Font.SourceSans; pathLbl.TextColor3=Color3.fromRGB(220,220,230); pathLbl.Size=UDim2.new(1,0,0,40); Instance.new("UICorner", pathLbl).CornerRadius=UDim.new(0,10)
-		local statsLbl = Instance.new("TextLabel", left); statsLbl.BackgroundTransparency=0.15; statsLbl.BackgroundColor3=Color3.fromRGB(30,30,36); statsLbl.Text="Pets: — | Gelés: —"; statsLbl.TextScaled=true; statsLbl.Font=Enum.Font.SourceSans; statsLbl.TextColor3=Color3.fromRGB(200,200,210); statsLbl.Size=UDim2.new(1,0,0,36); Instance.new("UICorner", statsLbl).CornerRadius=UDim.new(0,10)
-
-		local row = Instance.new("Frame", left); row.BackgroundTransparency=1; row.Size=UDim2.new(1,0,0,44)
-		local rowLayout = Instance.new("UIListLayout", row); rowLayout.FillDirection = Enum.FillDirection.Horizontal; rowLayout.Padding = UDim.new(0,8)
-
-		local scanBtn = Instance.new("TextButton", row); scanBtn.Text="Scanner"; scanBtn.TextScaled=true; scanBtn.Size=UDim2.new(0.31,0,1,0); scanBtn.BackgroundColor3=Color3.fromRGB(35,150,90); scanBtn.TextColor3=Color3.fromRGB(245,245,250); Instance.new("UICorner", scanBtn).CornerRadius=UDim.new(0,10)
-		local freezeBtn = Instance.new("TextButton", row); freezeBtn.Text="Freeze ici (tous)"; freezeBtn.TextScaled=true; freezeBtn.Size=UDim2.new(0.31,0,1,0); freezeBtn.BackgroundColor3=Color3.fromRGB(50,60,120); freezeBtn.TextColor3=Color3.fromRGB(245,245,250); Instance.new("UICorner", freezeBtn).CornerRadius=UDim.new(0,10)
-		local bringFreezeBtn = Instance.new("TextButton", row); bringFreezeBtn.Text="TP vers moi + Freeze"; bringFreezeBtn.TextScaled=true; bringFreezeBtn.Size=UDim2.new(0.31,0,1,0); bringFreezeBtn.BackgroundColor3=Color3.fromRGB(120,80,20); bringFreezeBtn.TextColor3=Color3.fromRGB(245,245,250); Instance.new("UICorner", bringFreezeBtn).CornerRadius=UDim.new(0,10)
-		local unfreezeBtn = Instance.new("TextButton", left); unfreezeBtn.Text="⛔ Unfreeze (tous)"; unfreezeBtn.TextScaled=true; unfreezeBtn.Size=UDim2.new(1,0,0,38); unfreezeBtn.BackgroundColor3=Color3.fromRGB(120,35,35); unfreezeBtn.TextColor3=Color3.fromRGB(245,245,250); Instance.new("UICorner", unfreezeBtn).CornerRadius=UDim.new(0,10)
-
-		local listFrame = Instance.new("Frame", right); listFrame.Size=UDim2.new(1,0,1,0); listFrame.BackgroundTransparency=0.15; listFrame.BackgroundColor3=Color3.fromRGB(30,30,36); Instance.new("UICorner", listFrame).CornerRadius=UDim.new(0,12)
-		local listScroll = Instance.new("ScrollingFrame", listFrame); listScroll.Size=UDim2.new(1,-10,1,-10); listScroll.Position=UDim2.fromOffset(5,5); listScroll.BackgroundTransparency=1; listScroll.ScrollBarThickness=6; listScroll.CanvasSize=UDim2.new(0,0,0,0)
-		local lLayout2 = Instance.new("UIListLayout", listScroll); lLayout2.Padding = UDim.new(0,4)
-
-		local PETS = {}
-		local function clearList() for _,c in ipairs(listScroll:GetChildren()) do if c:IsA("Frame") then c:Destroy() end end listScroll.CanvasSize = UDim2.new(0,0,0,0) end
-		local function addRow(i, p)
-			local row = Instance.new("Frame"); row.Size = UDim2.new(1,-6,0,28); row.BackgroundTransparency = 0.1; row.BackgroundColor3 = Color3.fromRGB(38,38,44); row.Parent = listScroll; Instance.new("UICorner", row).CornerRadius = UDim.new(0,8)
-			local lay = Instance.new("UIListLayout", row); lay.FillDirection = Enum.FillDirection.Horizontal; lay.Padding = UDim.new(0,6)
-			local function cell(w, txt, bold) local l = Instance.new("TextLabel", row); l.BackgroundTransparency = 1; l.Size = UDim2.new(w,0,1,0); l.Text = txt; l.TextScaled = true; l.Font = bold and Enum.Font.SourceSansBold or Enum.Font.SourceSans; l.TextColor3 = Color3.fromRGB(225,225,230) end
-			local cf = anyCFrame(p.root); local pos = cf.Position; local dist = (pos - getChar().HumanoidRootPart.Position).Magnitude
-			cell(0.08, ("#%d"):format(i), true); cell(0.38, p.name, true); cell(0.34, ("(%.1f, %.1f, %.1f)"):format(pos.X,pos.Y,pos.Z), false); cell(0.10, string.format("%.1f", dist), false); cell(0.08, p.frozen and "✓" or "—", true)
-		end
-		local function updateCanvas() task.defer(function() local tot = 0; for _,c in ipairs(listScroll:GetChildren()) do if c:IsA("Frame") then tot += c.AbsoluteSize.Y + 4 end end; listScroll.CanvasSize = UDim2.new(0,0,0,tot) end) end
-		local function refreshStats() local frozen = 0; for _,p in ipairs(PETS) do if p.frozen then frozen += 1 end end; statsLbl.Text = ("Pets: %d | Gelés: %d"):format(#PETS, frozen) end
-		local function doScan()
-			local petsFolder = workspace:FindFirstChild("PetsPhysical") or workspace:FindFirstChild("petsphysical") or workspace:FindFirstChild("Pets_Physical")
-			if not petsFolder then notify("workspace.PetsPhysical introuvable"); return end
-			-- scan (déjà défini plus haut, on re-scanne ici pour l’UI)
-			PETS = {}
-			local seen = {}
-			for _,child in ipairs(petsFolder:GetDescendants()) do
-				if (child:IsA("Model") or child:IsA("Folder")) and not seen[child] then
-					if nameLooksLikePetMover(child.Name) or hasOwnerAttrMatch(child) then
-						if not seen[child] then table.insert(PETS, { root = child, name = tostring(child.Name), frozen = false, targetCF = anyCFrame(child) }); seen[child]=true end
-					end
-				end
-			end
-			table.sort(PETS, function(a,b) return a.name < b.name end)
-			clearList(); for i,p in ipairs(PETS) do addRow(i,p) end; updateCanvas(); refreshStats()
-		end
-		scanBtn.MouseButton1Click:Connect(function() doScan() end)
-		freezeBtn.MouseButton1Click:Connect(function()
-			for _,p in ipairs(PETS) do p.targetCF = anyCFrame(p.root); p.frozen = true end
-			ensureFreezeLoop(); refreshStats(); notify("Freeze ici ✓")
-		end)
-		bringFreezeBtn.MouseButton1Click:Connect(function()
-			local hrp = getChar().HumanoidRootPart
-			local base = hrp.CFrame
-			local i=0
-			for _,p in ipairs(PETS) do
-				i+=1
-				local cf = base * CFrame.new((i%3-1)*2, 0, -math.floor((i-1)/3)*2) * CFrame.new(0,0,-2)
-				pivotTo(p.root, cf); p.targetCF=cf; p.frozen=true
-			end
-			ensureFreezeLoop(); clearList(); for i,p in ipairs(PETS) do addRow(i,p) end; updateCanvas(); refreshStats(); notify("TP + Freeze ultra-serré ✓")
-		end)
-		unfreezeBtn.MouseButton1Click:Connect(function()
-			for _,p in ipairs(PETS) do p.frozen=false end
-			refreshStats(); notify("Unfreeze ✓")
-		end)
-
-		closeBtn.MouseButton1Click:Connect(function() frame.Visible=false; reopen.Visible=true end)
-		reopen.MouseButton1Click:Connect(function() frame.Visible=true; reopen.Visible=false end)
-
-		PetFreezer.sg    = sg
-		PetFreezer.frame = frame
-		PetFreezer.ready = true
-		frame.Visible = true
-		doScan()
-	end
-
-	function PetFreezer.toggle()
-		if not PetFreezer.ready then BuildPetFreezer() return end
-		PetFreezer.frame.Visible = not PetFreezer.frame.Visible
-	end
-	function PetFreezer.show()
-		if not PetFreezer.ready then BuildPetFreezer() else PetFreezer.frame.Visible=true end
-	end
-end
-
--- ▶️ Bouton Player Tuner → Pet Freezer (VERT)
-openPetBtn.MouseButton1Click:Connect(function() PetFreezer.toggle() end)
+-- ▶️ Bouton Player Tuner → Harvest v5 Panel
+openV5Btn.MouseButton1Click:Connect(function() AutoHarv5.openUI() end)
 
 -- =========================================================
 -- ===================== HOTKEYS ===========================
@@ -1835,390 +1633,3 @@ end)
 applyAutoScale(screenGui, {mainFrame})
 applyAutoScale(gearGui,   {gearFrame})
 msg("✅ Saad Helper Pack chargé • Auto-buy Seeds/Gear/Eggs: ON (60s) • ⌘/Ctrl+clic TP • Mini Panel v3.3 • H=v2.4 (auto-stop 3s) • J=v5.5 • 🎃 Jack Submit prêt (eggs exclus).", Color3.fromRGB(170,230,255))
-
--- =========================================================
--- === PATCH: v5.5 UI + Mini Panel (sans bouton bleu PT) ===
--- =========================================================
-
-local Players           = game:GetService("Players")
-local RunService        = game:GetService("RunService")
-local UserInputService  = game:GetService("UserInputService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local StarterGui        = game:GetService("StarterGui")
-local Workspace         = game:GetService("Workspace")
-local LP = Players.LocalPlayer
-
--- =============== v5.5 (UI identique à fruit harvest v5) ===============
-local FH55 = {}
-do
-	-- Utils
-	local function notify(msg, dur)
-		pcall(function()
-			StarterGui:SetCore("SendNotification", {Title="AutoHarvest v5.5", Text=tostring(msg), Duration = dur or 2})
-		end)
-	end
-	local function getChar()
-		local ch = LP.Character or LP.CharacterAdded:Wait()
-		ch:WaitForChild("HumanoidRootPart", 5)
-		return ch
-	end
-	local function alive()
-		local ch = LP.Character
-		local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-		return hum and hum.Health > 0
-	end
-	local function vdist(a, b) return (a-b).Magnitude end
-
-	local CONFIG = {
-		SCAN_INTERVAL_NORMAL = 0.12,
-		SCAN_INTERVAL_TURBO  = 0.020,
-		HARVEST_BURST        = 3,
-		MAX_PER_SCAN         = 24,
-		PROMPT_COOLDOWN      = 0.35,
-		RESCAN_COOLDOWN      = 0.60,
-		RUN_LIMIT            = 200,
-		USE_REMOTE_FIRST     = true,
-		SCAN_RADIUS          = 200,
-	}
-	local HALLOWEEN = {
-		["banesberry"]=true, ["bloodred mushroom"]=true, ["blood-red mushroom"]=true, ["blood red mushroom"]=true,
-		["chicken feed"]=true, ["ghoul root"]=true, ["ghoulroot"]=true, ["great pumpkin"]=true,
-		["jack-o-lantern"]=true, ["jack o lantern"]=true, ["jack-o’-lantern"]=true, ["jack o’ lantern"]=true,
-		["poison apple"]=true, ["poisoned apple"]=true, ["seer vine"]=true, ["seervine"]=true,
-	}
-	local FRUIT_KEYWORDS = {"berry","mushroom","pumpkin","apple","grape","melon","corn","tomato","carrot","coconut","cactus","dragon","mango","pepper","cacao","bean","bamboo","vine","root","strawberry","blueberry","watermelon","romanesco","pinecone","lily","tulip","thorn","bud"}
-	local NEG_ACTION = {"buy","sell","open","talk","upgrade","use","feed","place","equip","shop"}
-
-	local STATE = {
-		ui = nil,
-		enabled = false,
-		turbo = true,
-		halloweenOnly = false,
-		stats = { scanned=0, harvested=0 },
-		runCount = 0,
-		runLimit = CONFIG.RUN_LIMIT,
-		scanRadius = CONFIG.SCAN_RADIUS,
-		processedAt = {},
-		recentTargets = {},
-		collectSender = nil,
-		ALL_PROMPTS = {},
-		IS_IN_SET = {},
-	}
-
-	local function addPrompt(pp) if STATE.IS_IN_SET[pp] then return end; STATE.IS_IN_SET[pp]=true; STATE.ALL_PROMPTS[#STATE.ALL_PROMPTS+1]=pp end
-	local function remPrompt(pp) if not STATE.IS_IN_SET[pp] then return end; STATE.IS_IN_SET[pp]=nil end
-	for _,d in ipairs(Workspace:GetDescendants()) do if d:IsA("ProximityPrompt") then addPrompt(d) end end
-	Workspace.DescendantAdded:Connect(function(inst) if inst:IsA("ProximityPrompt") then addPrompt(inst) end end)
-	Workspace.DescendantRemoving:Connect(function(inst) if inst:IsA("ProximityPrompt") then remPrompt(inst) end end)
-
-	local function findCollectSender()
-		if STATE.collectSender ~= nil then return end
-		if not CONFIG.USE_REMOTE_FIRST then STATE.collectSender=false return end
-		local probes = {
-			function()
-				local mods = ReplicatedStorage:FindFirstChild("Modules"); if not mods then return end
-				local rem = mods:FindFirstChild("Remotes")
-				if rem and rem:IsA("ModuleScript") then
-					local ok,tbl = pcall(require, rem)
-					if ok and type(tbl)=="table" and tbl.Crops and tbl.Crops.Collect and tbl.Crops.Collect.Send then
-						return tbl.Crops.Collect.Send
-					end
-				end
-			end,
-			function()
-				for _,d in ipairs(ReplicatedStorage:GetChildren()) do
-					local rem = (d:IsA("ModuleScript") and d.Name=="Remotes") and d or (d:FindFirstChild("Remotes"))
-					if rem and rem:IsA("ModuleScript") then
-						local ok,tbl = pcall(require, rem)
-						if ok and type(tbl)=="table" and tbl.Crops and tbl.Crops.Collect and tbl.Crops.Collect.Send then
-							return tbl.Crops.Collect.Send
-						end
-					end
-				end
-			end
-		}
-		for _,p in ipairs(probes) do local ok,fn=pcall(p); if ok and type(fn)=="function" then STATE.collectSender=fn; notify("Collect.Remote détecté ✓",2); return end end
-		STATE.collectSender=false
-	end
-
-	local function containsAny(s, list) for _,w in ipairs(list) do if s:find(w,1,true) then return true end end return false end
-	local function labelFor(pp)
-		local names, root = {}, pp.Parent
-		if root then names[#names+1] = root.Name end
-		if root and root.Parent then names[#names+1] = root.Parent.Name end
-		local best = ""
-		for _,x in ipairs(names) do if #x > #best then best = x end end
-		return (best ~= "" and best) or (pp.ObjectText ~= "" and pp.ObjectText) or (pp.ActionText ~= "" and pp.ActionText) or "Unknown"
-	end
-	local function passHalloween(pp)
-		if not STATE.halloweenOnly then return true end
-		local nm = labelFor(pp):lower()
-		for key,_ in pairs(HALLOWEEN) do if nm==key or nm:find(key,1,true) then return true end end
-		return false
-	end
-	local function isHarvestPrompt(pp)
-		if not (pp and pp:IsA("ProximityPrompt") and pp.Enabled) then return false end
-		local action = (pp.ActionText or ""):lower()
-		local object = (pp.ObjectText or ""):lower()
-		if action=="" and object=="" then object = labelFor(pp):lower() end
-		if containsAny(action, NEG_ACTION) or containsAny(object, NEG_ACTION) then return false end
-		if action:find("harvest",1,true) then return true end
-		if action:find("collect",1,true) or action:find("pick",1,true) or action:find("gather",1,true) then
-			if STATE.halloweenOnly then return passHalloween(pp) end
-			local l = (object ~= "" and object) or labelFor(pp):lower()
-			return containsAny(l, FRUIT_KEYWORDS)
-		end
-		return false
-	end
-
-	local function firePrompt(pp)
-		pcall(function() pp.HoldDuration=0; pp.RequiresLineOfSight=false; pp.MaxActivationDistance=math.huge end)
-		local ok=false
-		if typeof(fireproximityprompt)=="function" then ok=pcall(fireproximityprompt, pp, 1); if not ok then ok=pcall(fireproximityprompt, pp) end end
-		if not ok then pcall(function() pp.Enabled=false; task.wait(); pp.Enabled=true end); ok=true end
-		return ok
-	end
-	local function confirmSuccess(pp)
-		local beforeParent = pp.Parent
-		local beforeEnabled = pp.Enabled
-		task.wait(0.06)
-		if not pp.Parent then return true end
-		if not pp:IsDescendantOf(Workspace) then return true end
-		if beforeEnabled and not pp.Enabled then return true end
-		if beforeParent ~= pp.Parent then return true end
-		return false
-	end
-	local function tryHarvest(pp)
-		if not (pp and pp.Parent) then return false end
-		local now = os.clock()
-		local last = STATE.processedAt[pp]
-		if last and (now - last) < CONFIG.PROMPT_COOLDOWN then return false end
-		STATE.processedAt[pp] = now
-
-		if STATE.collectSender == nil then findCollectSender() end
-		if STATE.collectSender then
-			local ok = pcall(function() STATE.collectSender(pp) end)
-			if ok and confirmSuccess(pp) then STATE.stats.harvested += 1; STATE.runCount += 1; return true end
-		end
-		for _=1, CONFIG.HARVEST_BURST do firePrompt(pp) end
-		if confirmSuccess(pp) then STATE.stats.harvested += 1; STATE.runCount += 1; return true end
-		return false
-	end
-
-	local function gather()
-		local ch = getChar(); local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
-		if not hrp then return {} end
-		local list = {}
-		local now = os.clock()
-		local radius = STATE.scanRadius
-		for i=#STATE.ALL_PROMPTS,1,-1 do
-			local pp = STATE.ALL_PROMPTS[i]
-			if not STATE.IS_IN_SET[pp] or not (pp and pp.Parent) then
-				table.remove(STATE.ALL_PROMPTS, i)
-			else
-				if isHarvestPrompt(pp) and passHalloween(pp) then
-					local lr = STATE.recentTargets[pp]
-					if (not lr) or ((now - lr) > CONFIG.RESCAN_COOLDOWN) then
-						local root = pp.Parent
-						local pos
-						if root:IsA("BasePart") then pos = root.Position else
-							local bp = root:FindFirstChildWhichIsA("BasePart") or (root.Parent and root.Parent:FindFirstChildWhichIsA("BasePart"))
-							pos = bp and bp.Position or hrp.Position
-						end
-						local dd = vdist(hrp.Position, pos)
-						if dd <= radius then list[#list+1] = {pp=pp, dd=dd} end
-					end
-				end
-			end
-		end
-		table.sort(list, function(a,b) return a.dd < b.dd end)
-		local out = {}
-		local cap = math.min(CONFIG.MAX_PER_SCAN, #list)
-		for i=1, cap do out[#out+1] = list[i].pp end
-		STATE.stats.scanned = #out
-		return out
-	end
-
-	local running = false
-	local function mainLoop()
-		if running then return end
-		running = true
-		notify(("Auto-Harvest ON%s%s — cible: %d fruits (rayon %dst)")
-			:format(STATE.halloweenOnly and " [Halloween]" or "", STATE.turbo and " [Turbo]" or "", STATE.runLimit, STATE.scanRadius), 3)
-		while STATE.enabled do
-			if STATE.runCount >= STATE.runLimit then
-				STATE.enabled = false
-				notify(("Run terminé: %d/%d récoltes. Auto-Harvest OFF."):format(STATE.runCount, STATE.runLimit), 3)
-				break
-			end
-			if alive() then
-				local list = gather()
-				local now = os.clock()
-				for _,pp in ipairs(list) do
-					STATE.recentTargets[pp] = now
-					task.spawn(function() pcall(tryHarvest, pp) end)
-				end
-				task.wait(STATE.turbo and CONFIG.SCAN_INTERVAL_TURBO or CONFIG.SCAN_INTERVAL_NORMAL)
-			else
-				task.wait(0.25)
-			end
-		end
-		running = false
-	end
-
-	-- UI identique v5
-	local function makeUI()
-		if STATE.ui and STATE.ui.Parent then return end
-		local pg  = LP:WaitForChild("PlayerGui")
-		local gui = Instance.new("ScreenGui")
-		gui.Name = "Saad_AutoHarvest_v55"
-		gui.IgnoreGuiInset = true
-		gui.ResetOnSpawn = false
-		gui.Parent = pg
-
-		local frame = Instance.new("Frame")
-		frame.Size = UDim2.new(0, 348, 0, 214)
-		frame.Position = UDim2.new(0, 20, 0, 80)
-		frame.BackgroundColor3 = Color3.fromRGB(22,22,26)
-		frame.BorderSizePixel = 0
-		frame.Parent = gui
-		Instance.new("UICorner", frame).CornerRadius = UDim.new(0,12)
-
-		local title = Instance.new("TextLabel")
-		title.BackgroundTransparency = 1
-		title.Size = UDim2.new(1, -40, 0, 28)
-		title.Position = UDim2.new(0, 12, 0, 6)
-		title.Text = "🌾 Auto-Harvest v5.5"
-		title.TextColor3 = Color3.fromRGB(235,235,245)
-		title.Font = Enum.Font.GothamBold
-		title.TextXAlignment = Enum.TextXAlignment.Left
-		title.TextSize = 18
-		title.Parent = frame
-
-		local closeBtn = Instance.new("TextButton")
-		closeBtn.Size = UDim2.new(0, 28, 0, 28)
-		closeBtn.Position = UDim2.new(1, -32, 0, 6)
-		closeBtn.BackgroundColor3 = Color3.fromRGB(45,45,55)
-		closeBtn.Text = "✕"
-		closeBtn.TextColor3 = Color3.fromRGB(235,235,245)
-		closeBtn.Font = Enum.Font.Gotham
-		closeBtn.TextSize = 16
-		closeBtn.Parent = frame
-		Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0,8)
-		closeBtn.MouseButton1Click:Connect(function() gui.Enabled = false end)
-
-		local dragging, dragStart, startPos = false, nil, nil
-		frame.InputBegan:Connect(function(i)
-			if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=true; dragStart=i.Position; startPos=frame.Position end
-		end)
-		UserInputService.InputEnded:Connect(function(i)
-			if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=false end
-		end)
-		UserInputService.InputChanged:Connect(function(i)
-			if dragging and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then
-				local d=i.Position-dragStart
-				frame.Position=UDim2.new(startPos.X.Scale, startPos.X.Offset+d.X, startPos.Y.Scale, startPos.Y.Offset+d.Y)
-			end
-		end)
-
-		local function toggleRow(y, label, default, cb)
-			local holder = Instance.new("Frame"); holder.Size = UDim2.new(1, -24, 0, 28); holder.Position = UDim2.new(0, 12, 0, y); holder.BackgroundTransparency=1; holder.Parent=frame
-			local btn = Instance.new("TextButton"); btn.Size = UDim2.new(0, 28, 0, 28); btn.BackgroundColor3 = default and Color3.fromRGB(73,167,88) or Color3.fromRGB(70,70,78); btn.Text=""; btn.Parent=holder; Instance.new("UICorner", btn).CornerRadius=UDim.new(0,8)
-			local lb = Instance.new("TextLabel"); lb.Size=UDim2.new(1,-40,1,0); lb.Position=UDim2.new(0,40,0,0); lb.BackgroundTransparency=1; lb.Text=label; lb.TextColor3=Color3.fromRGB(220,220,230); lb.Font=Enum.Font.Gotham; lb.TextXAlignment=Enum.TextXAlignment.Left; lb.TextSize=16; lb.Parent=holder
-			local state = default
-			btn.MouseButton1Click:Connect(function() state = not state; btn.BackgroundColor3 = state and Color3.fromRGB(73,167,88) or Color3.fromRGB(70,70,78); pcall(cb, state) end)
-			pcall(cb, default)
-			return holder
-		end
-
-		local y = 40
-		toggleRow(y, "Activer Auto-Harvest", false, function(on)
-			STATE.enabled = on
-			if on then STATE.runCount = 0; task.spawn(mainLoop) end
-		end); y = y + 32
-
-		toggleRow(y, "Mode Turbo (cadence ++)", true, function(on) STATE.turbo = on end); y = y + 32
-		toggleRow(y, "Harvest Halloween ONLY", false, function(on) STATE.halloweenOnly = on end); y = y + 32
-
-		local limitRow = Instance.new("Frame"); limitRow.Size=UDim2.new(1,-24,0,28); limitRow.Position=UDim2.new(0,12,0,y); limitRow.BackgroundTransparency=1; limitRow.Parent=frame
-		local limMinus=Instance.new("TextButton"); limMinus.Size=UDim2.new(0,28,0,28); limMinus.Text="−"; limMinus.Font=Enum.Font.GothamBold; limMinus.TextColor3=Color3.fromRGB(235,235,245); limMinus.BackgroundColor3=Color3.fromRGB(70,70,78); limMinus.Parent=limitRow; Instance.new("UICorner", limMinus).CornerRadius=UDim.new(0,8)
-		local limPlus=Instance.new("TextButton"); limPlus.Size=UDim2.new(0,28,0,28); limPlus.Position=UDim2.new(1,-92,0,0); limPlus.Text="+"; limPlus.Font=Enum.Font.GothamBold; limPlus.TextColor3=Color3.fromRGB(235,235,245); limPlus.BackgroundColor3=Color3.fromRGB(70,70,78); limPlus.Parent=limitRow; Instance.new("UICorner", limPlus).CornerRadius=UDim.new(0,8)
-		local limReset=Instance.new("TextButton"); limReset.Size=UDim2.new(0,60,0,28); limReset.Position=UDim2.new(1,-60,0,0); limReset.Text="Reset"; limReset.Font=Enum.Font.Gotham; limReset.TextColor3=Color3.fromRGB(235,235,245); limReset.BackgroundColor3=Color3.fromRGB(45,45,55); limReset.Parent=limitRow; Instance.new("UICorner", limReset).CornerRadius=UDim.new(0,8)
-		local limLabel=Instance.new("TextLabel"); limLabel.BackgroundTransparency=1; limLabel.Position=UDim2.new(0,36,0,0); limLabel.Size=UDim2.new(1,-140,1,0); limLabel.Font=Enum.Font.Gotham; limLabel.TextColor3=Color3.fromRGB(220,220,230); limLabel.TextXAlignment=Enum.TextXAlignment.Left; limLabel.TextSize=16; limLabel.Parent=limitRow
-		local function refreshLimit() limLabel.Text = ("Limite: %d  |  Run: %d/%d"):format(STATE.runLimit, STATE.runCount, STATE.runLimit) end; refreshLimit()
-		limMinus.MouseButton1Click:Connect(function() STATE.runLimit = math.max(10,  STATE.runLimit-10); refreshLimit() end)
-		limPlus.MouseButton1Click:Connect(function() STATE.runLimit = math.min(1000, STATE.runLimit+10); refreshLimit() end)
-		limReset.MouseButton1Click:Connect(function() STATE.runCount = 0; refreshLimit() end)
-		y = y + 32
-
-		local radRow = Instance.new("Frame"); radRow.Size=UDim2.new(1,-24,0,28); radRow.Position=UDim2.new(0,12,0,y); radRow.BackgroundTransparency=1; radRow.Parent=frame
-		local radMinus=Instance.new("TextButton"); radMinus.Size=UDim2.new(0,28,0,28); radMinus.Text="−"; radMinus.Font=Enum.Font.GothamBold; radMinus.TextColor3=Color3.fromRGB(235,235,245); radMinus.BackgroundColor3=Color3.fromRGB(70,70,78); radMinus.Parent=radRow; Instance.new("UICorner", radMinus).CornerRadius=UDim.new(0,8)
-		local radPlus=Instance.new("TextButton"); radPlus.Size=UDim2.new(0,28,0,28); radPlus.Position=UDim2.new(1,-92,0,0); radPlus.Text="+"; radPlus.Font=Enum.Font.GothamBold; radPlus.TextColor3=Color3.fromRGB(235,235,245); radPlus.BackgroundColor3=Color3.fromRGB(70,70,78); radPlus.Parent=radRow; Instance.new("UICorner", radPlus).CornerRadius=UDim.new(0,8)
-		local radLabel=Instance.new("TextLabel"); radLabel.BackgroundTransparency=1; radLabel.Position=UDim2.new(0,36,0,0); radLabel.Size=UDim2.new(1,-100,1,0); radLabel.Font=Enum.Font.Gotham; radLabel.TextColor3=Color3.fromRGB(220,220,230); radLabel.TextXAlignment=Enum.TextXAlignment.Left; radLabel.TextSize=16; radLabel.Parent=radRow
-		local function refreshRadius() radLabel.Text = ("Rayon de scan: %dst"):format(STATE.scanRadius) end; refreshRadius()
-		radMinus.MouseButton1Click:Connect(function() STATE.scanRadius = math.max(50,  STATE.scanRadius-25); refreshRadius() end)
-		radPlus.MouseButton1Click:Connect(function() STATE.scanRadius = math.min(600, STATE.scanRadius+25); refreshRadius() end)
-
-		local stats = Instance.new("TextLabel"); stats.Size=UDim2.new(1,-24,0,22); stats.Position=UDim2.new(0,12,1,-26); stats.BackgroundTransparency=1
-		stats.TextColor3=Color3.fromRGB(150,150,160); stats.Font=Enum.Font.Code; stats.TextXAlignment=Enum.TextXAlignment.Left; stats.TextSize=14; stats.Parent=frame
-		RunService.RenderStepped:Connect(function()
-			stats.Text = string.format("Scan:%d | Harvest:%d | Run:%d/%d %s",
-				STATE.stats.scanned or 0, STATE.stats.harvested or 0, STATE.runCount or 0, STATE.runLimit or 0,
-				STATE.halloweenOnly and "🎃" or "🌱"
-			)
-		end)
-
-		STATE.ui = gui
-	end
-
-	function FH55.ensureUI()
-		if not (STATE.ui and STATE.ui.Parent) then makeUI(); notify("Chargé: Scan propre + Rayon + Stop à 200 ✓", 2) end
-		return STATE.ui
-	end
-end
-
--- (A) Mini Panel : bouton pour ouvrir l’UI v5.5
-task.spawn(function()
-	while task.wait(0.5) do
-		local pg = LP:FindFirstChild("PlayerGui"); if not pg then continue end
-		local mini = pg:FindFirstChild("SaadMiniPanel")
-		if mini then
-			local frame = mini:FindFirstChildOfClass("Frame")
-			if frame then
-				local container = frame:FindFirstChildWhichIsA("Frame", true) or frame
-				local row1 = nil
-				for _,ch in ipairs(container:GetChildren()) do
-					if ch:IsA("Frame") and ch.AbsoluteSize.Y >= 36 and ch.Position.Y.Offset <= 50 then row1 = ch break end
-				end
-				row1 = row1 or Instance.new("Frame", container); row1.Size = UDim2.new(1,0,0,40); row1.BackgroundTransparency=1; row1.Position = UDim2.new(0,0,0,0)
-				local btn = row1:FindFirstChild("OpenV55Btn") or Instance.new("TextButton")
-				btn.Name="OpenV55Btn"
-				btn.Size = UDim2.new(0.48, -4, 1, 0); btn.Position = UDim2.new(0, 0, 0, 0)
-				btn.BackgroundColor3 = Color3.fromRGB(100, 180, 80)
-				btn.TextColor3 = Color3.fromRGB(255,255,255)
-				btn.Text = "🌾 Ouvrir Harvest v5.5 UI"
-				btn.Font = Enum.Font.GothamBold
-				btn.TextSize = 13
-				btn.AutoButtonColor=true
-				btn.Parent = row1
-				btn.MouseButton1Click:Connect(function()
-					local g = FH55.ensureUI()
-					g.Enabled = true
-				end)
-			end
-			break
-		end
-	end
-end)
-
--- (B) **SUPPRIMÉ** : injection d’un bouton bleu dans le Player Tuner (retiré selon demande)
-
--- (C) Raccourci: Alt+J -> ouvre l'UI v5.5
-UserInputService.InputBegan:Connect(function(i, gp)
-	if gp then return end
-	if (i.KeyCode == Enum.KeyCode.J) and (UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt) or UserInputService:IsKeyDown(Enum.KeyCode.RightAlt)) then
-		local g = FH55.ensureUI(); g.Enabled = true
-	end
-end)
-
--- ====================== FIN ======================
