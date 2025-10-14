@@ -1633,3 +1633,4 @@ end)
 applyAutoScale(screenGui, {mainFrame})
 applyAutoScale(gearGui,   {gearFrame})
 msg("✅ Saad Helper Pack chargé • Auto-buy Seeds/Gear/Eggs: ON (60s) • ⌘/Ctrl+clic TP • Mini Panel v3.3 • H=v2.4 (auto-stop 3s) • J=v5.5 • 🎃 Jack Submit prêt (eggs exclus).", Color3.fromRGB(170,230,255))
+
