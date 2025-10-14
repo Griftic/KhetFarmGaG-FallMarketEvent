@@ -10,7 +10,7 @@
 --     • Auto Harvest v2.4 (scan périodique) -> STOP auto 3s & backpack plein
 --     • Submit All (Cauldron) • Event Seeds (Spooky) • 🎃 Submit Halloween → Jack
 -- - Raccourcis: H = toggle Auto Harvest v2.4 • J = toggle Auto Harvest v5.5
--- - ▶️ Player Tuner: bouton "🐾 Open Pet Freezer" pour l’UI PetMover (freeze/TP)
+-- - ▶️ Player Tuner: bouton VERT "🐾 Open Pet Freezer" (uniquement)
 -- =====================================================================
 
 --// Services
@@ -549,10 +549,10 @@ local function createSlider(parent, y, labelText, minValue, maxValue, step, init
 	local dragging = false
 	local function updateFromX(x) local ap,as = track.AbsolutePosition.X, track.AbsoluteSize.X; if as<=0 then return end; local pct = math.max(0, math.min(1, (x-ap)/as)); local val = minValue + pct*(maxValue-minValue); setValue(val, true) end
 	track.InputBegan:Connect(function(i)
-		if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=true; updateFromX(i.Position.X) i.Changed:Connect(function() if i.UserInputState==Enum.UserInputState.End then dragging=false; clampOnScreen(mainFrame) end end) end
+		if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=true; updateFromX(i.Position.X) i.Changed:Connect(function() if i.UserInputState==Enum.UserInputState.End then dragging=false; clampOnScreen(frame) end end) end
 	end)
 	knob.InputBegan:Connect(function(i)
-		if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=true; updateFromX(i.Position.X) i.Changed:Connect(function() if i.UserInputState==Enum.UserInputState.End then dragging=false; clampOnScreen(mainFrame) end end) end
+		if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=true; updateFromX(i.Position.X) i.Changed:Connect(function() if i.UserInputState==Enum.UserInputState.End then dragging=false; clampOnScreen(frame) end end) end
 	end)
 	UserInputService.InputChanged:Connect(function(i)
 		if dragging and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then updateFromX(i.Position.X) end
@@ -591,7 +591,7 @@ openMiniBtn.Size = UDim2.new(0.52, 0, 1, 0); openMiniBtn.Position = UDim2.new(0.
 openMiniBtn.BackgroundColor3 = Color3.fromRGB(140, 110, 200); openMiniBtn.TextColor3 = Color3.fromRGB(255,255,255)
 openMiniBtn.Text = "⚙️ Open Saad Mini Panel"; openMiniBtn.Font = Enum.Font.GothamBold; openMiniBtn.TextSize = 13; openMiniBtn.Parent = miscRow; rounded(openMiniBtn,8)
 
--- Row 3: Pet Freezer (nouveau)
+-- Row 3: Pet Freezer (VERT uniquement)
 local petRow = Instance.new("Frame"); petRow.Size = UDim2.new(1, 0, 0, 36); petRow.Position = UDim2.new(0, 0, 0, 272); petRow.BackgroundTransparency = 1; petRow.Parent = content
 local openPetBtn = Instance.new("TextButton")
 openPetBtn.Size = UDim2.new(1, 0, 1, 0); openPetBtn.Position = UDim2.new(0, 0, 0, 0)
@@ -1108,10 +1108,6 @@ end
 
 -- =========================================================
 -- =============== AUTO HARVEST v5.5 (nouveau) =============
--- ===== Intégré depuis "fruit harvest v5.lua" (v5.5)  =====
--- ===== Filtre strict + Scan rayon + Stop à 200 par run ===
--- ===== (bloc encapsulé pour éviter les collisions)    ===
--- Source : Auto-Harvest v5.5 (intégré) :contentReference[oaicite:2]{index=2}
 -- =========================================================
 local AutoHarv5 = { }
 do
@@ -1175,7 +1171,7 @@ do
 	Workspace.DescendantAdded:Connect(function(inst) if inst:IsA("ProximityPrompt") then STATE.IS_IN_SET[inst]=true; table.insert(STATE.ALL_PROMPTS, inst) end end)
 	Workspace.DescendantRemoving:Connect(function(inst) if inst:IsA("ProximityPrompt") then STATE.IS_IN_SET[inst]=nil end end)
 
-	-- remote discovery (forum hint)
+	-- remote discovery
 	local function findCollectSender()
 		if STATE.collectSender ~= nil then return end
 		if not CONFIG.USE_REMOTE_FIRST then STATE.collectSender = false return end
@@ -1533,17 +1529,12 @@ openMiniBtn.MouseButton1Click:Connect(function() local g = buildMiniPanel(); g.E
 
 -- =========================================================
 -- ============== PET FREEZER (PetMover UI) ================
--- ===== Intégré depuis "pet freezer.lua" (UI/logic)  ======
--- ===== Accessible via bouton Player Tuner (🐾)        =====
--- Source : Pet Freezer / PetMover (intégré) :contentReference[oaicite:3]{index=3}
 -- =========================================================
 local PetFreezer = { ready=false, sg=nil, frame=nil, show=nil, toggle=nil }
 do
-	-- On encapsule l’intégralité du code d’UI/logic dans une fonction d’initialisation
 	local function BuildPetFreezer()
 		if PetFreezer.ready and PetFreezer.sg and PetFreezer.sg.Parent then return end
 
-		-- (bloc adapté de pet freezer.lua – mêmes fonctions/logic)
 		local Players = game:GetService("Players")
 		local UIS     = game:GetService("UserInputService")
 		local SG      = game:GetService("StarterGui")
@@ -1720,7 +1711,6 @@ do
 		end
 		local function unfreezeAll() for _,p in ipairs(PETS) do p.frozen=false end; maybeStopLoop(); notify("Unfreeze : tous les pets libérés") end
 
-		-- UI
 		local pg = playerGui
 		local sg = Instance.new("ScreenGui"); sg.Name = "Saad_PetMover_UI"; sg.IgnoreGuiInset = true; sg.ResetOnSpawn = false; sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling; sg.DisplayOrder = 10000; sg.Parent = pg
 		local reopen = Instance.new("TextButton", sg); reopen.Name="Reopen"; reopen.Visible=false; reopen.Text="🐾"; reopen.TextScaled=true; reopen.Size=UDim2.fromOffset(56,56); reopen.Position=UDim2.fromOffset(16, sg.AbsoluteSize.Y-72); reopen.BackgroundColor3=Color3.fromRGB(35,150,90); reopen.TextColor3=Color3.fromRGB(245,245,250); Instance.new("UICorner", reopen).CornerRadius = UDim.new(0,16)
@@ -1731,7 +1721,7 @@ do
 		local title = Instance.new("TextLabel", titleBar); title.BackgroundTransparency=1; title.Size=UDim2.new(1,-140,1,0); title.Position=UDim2.fromOffset(12,0); title.Text="🐾 PetMover — Freeze ici / TP vers moi + Freeze / Unfreeze"; title.TextScaled=true; title.Font=Enum.Font.SourceSansBold; title.TextColor3=Color3.fromRGB(235,235,240)
 		local closeBtn = Instance.new("TextButton", titleBar); closeBtn.Text="✕"; closeBtn.TextScaled=true; closeBtn.Size=UDim2.fromOffset(40,40); closeBtn.Position=UDim2.new(1,-44,0,2); closeBtn.BackgroundColor3=Color3.fromRGB(60,25,25); closeBtn.TextColor3=Color3.fromRGB(245,245,250); Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0,12)
 
-		do -- drag
+		do
 			local dragging=false; local dragStart; local startPos
 			local function upd(i) local d=i.Position-dragStart; frame.Position=UDim2.fromOffset(startPos.X.Offset+d.X, startPos.Y.Offset+d.Y) end
 			titleBar.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=true; dragStart=i.Position; startPos=frame.Position end end)
@@ -1759,7 +1749,7 @@ do
 		local listScroll = Instance.new("ScrollingFrame", listFrame); listScroll.Size=UDim2.new(1,-10,1,-10); listScroll.Position=UDim2.fromOffset(5,5); listScroll.BackgroundTransparency=1; listScroll.ScrollBarThickness=6; listScroll.CanvasSize=UDim2.new(0,0,0,0)
 		local lLayout2 = Instance.new("UIListLayout", listScroll); lLayout2.Padding = UDim.new(0,4)
 
-		local PETS_REF = { }
+		local PETS = {}
 		local function clearList() for _,c in ipairs(listScroll:GetChildren()) do if c:IsA("Frame") then c:Destroy() end end listScroll.CanvasSize = UDim2.new(0,0,0,0) end
 		local function addRow(i, p)
 			local row = Instance.new("Frame"); row.Size = UDim2.new(1,-6,0,28); row.BackgroundTransparency = 0.1; row.BackgroundColor3 = Color3.fromRGB(38,38,44); row.Parent = listScroll; Instance.new("UICorner", row).CornerRadius = UDim.new(0,8)
@@ -1773,12 +1763,39 @@ do
 		local function doScan()
 			local petsFolder = workspace:FindFirstChild("PetsPhysical") or workspace:FindFirstChild("petsphysical") or workspace:FindFirstChild("Pets_Physical")
 			if not petsFolder then notify("workspace.PetsPhysical introuvable"); return end
-			scanPets(); clearList(); for i,p in ipairs(PETS) do addRow(i,p) end; updateCanvas(); refreshStats()
+			-- scan (déjà défini plus haut, on re-scanne ici pour l’UI)
+			PETS = {}
+			local seen = {}
+			for _,child in ipairs(petsFolder:GetDescendants()) do
+				if (child:IsA("Model") or child:IsA("Folder")) and not seen[child] then
+					if nameLooksLikePetMover(child.Name) or hasOwnerAttrMatch(child) then
+						if not seen[child] then table.insert(PETS, { root = child, name = tostring(child.Name), frozen = false, targetCF = anyCFrame(child) }); seen[child]=true end
+					end
+				end
+			end
+			table.sort(PETS, function(a,b) return a.name < b.name end)
+			clearList(); for i,p in ipairs(PETS) do addRow(i,p) end; updateCanvas(); refreshStats()
 		end
 		scanBtn.MouseButton1Click:Connect(function() doScan() end)
-		freezeBtn.MouseButton1Click:Connect(function() freezeHereAll(); refreshStats() end)
-		bringFreezeBtn.MouseButton1Click:Connect(function() bringToMeAndFreezeAll(); clearList(); for i,p in ipairs(PETS) do addRow(i,p) end; updateCanvas(); refreshStats() end)
-		unfreezeBtn.MouseButton1Click:Connect(function() for _,p in ipairs(PETS) do p.frozen=false end; refreshStats() end)
+		freezeBtn.MouseButton1Click:Connect(function()
+			for _,p in ipairs(PETS) do p.targetCF = anyCFrame(p.root); p.frozen = true end
+			ensureFreezeLoop(); refreshStats(); notify("Freeze ici ✓")
+		end)
+		bringFreezeBtn.MouseButton1Click:Connect(function()
+			local hrp = getChar().HumanoidRootPart
+			local base = hrp.CFrame
+			local i=0
+			for _,p in ipairs(PETS) do
+				i+=1
+				local cf = base * CFrame.new((i%3-1)*2, 0, -math.floor((i-1)/3)*2) * CFrame.new(0,0,-2)
+				pivotTo(p.root, cf); p.targetCF=cf; p.frozen=true
+			end
+			ensureFreezeLoop(); clearList(); for i,p in ipairs(PETS) do addRow(i,p) end; updateCanvas(); refreshStats(); notify("TP + Freeze ultra-serré ✓")
+		end)
+		unfreezeBtn.MouseButton1Click:Connect(function()
+			for _,p in ipairs(PETS) do p.frozen=false end
+			refreshStats(); notify("Unfreeze ✓")
+		end)
 
 		closeBtn.MouseButton1Click:Connect(function() frame.Visible=false; reopen.Visible=true end)
 		reopen.MouseButton1Click:Connect(function() frame.Visible=true; reopen.Visible=false end)
@@ -1792,14 +1809,14 @@ do
 
 	function PetFreezer.toggle()
 		if not PetFreezer.ready then BuildPetFreezer() return end
-		if PetFreezer.frame.Visible then PetFreezer.frame.Visible=false else PetFreezer.frame.Visible=true end
+		PetFreezer.frame.Visible = not PetFreezer.frame.Visible
 	end
 	function PetFreezer.show()
 		if not PetFreezer.ready then BuildPetFreezer() else PetFreezer.frame.Visible=true end
 	end
 end
 
--- ▶️ Bouton Player Tuner → Pet Freezer
+-- ▶️ Bouton Player Tuner → Pet Freezer (VERT)
 openPetBtn.MouseButton1Click:Connect(function() PetFreezer.toggle() end)
 
 -- =========================================================
@@ -1818,14 +1835,10 @@ end)
 applyAutoScale(screenGui, {mainFrame})
 applyAutoScale(gearGui,   {gearFrame})
 msg("✅ Saad Helper Pack chargé • Auto-buy Seeds/Gear/Eggs: ON (60s) • ⌘/Ctrl+clic TP • Mini Panel v3.3 • H=v2.4 (auto-stop 3s) • J=v5.5 • 🎃 Jack Submit prêt (eggs exclus).", Color3.fromRGB(170,230,255))
+
 -- =========================================================
--- === PATCH: Remplacer v4 par v5.5 + bouton Pet Freezer ===
+-- === PATCH: v5.5 UI + Mini Panel (sans bouton bleu PT) ===
 -- =========================================================
--- Ce bloc :
--- 1) Ajoute Auto-Harvest v5.5 avec l'UI identique à "fruit harvest v5" (Turbo + Halloween).
--- 2) Ajoute un bouton dans le Player Tuner: "🐾 Pet Freezer" (ouvre la fenêtre PetMover/Freezer).
--- 3) Ajoute un bouton "🌾 Ouvrir Harvest v5.5 UI" dans le Mini Panel (si présent).
--- A coller une seule fois.
 
 local Players           = game:GetService("Players")
 local RunService        = game:GetService("RunService")
@@ -1833,7 +1846,6 @@ local UserInputService  = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local StarterGui        = game:GetService("StarterGui")
 local Workspace         = game:GetService("Workspace")
-
 local LP = Players.LocalPlayer
 
 -- =============== v5.5 (UI identique à fruit harvest v5) ===============
@@ -1893,30 +1905,18 @@ do
 		IS_IN_SET = {},
 	}
 
-	-- cache prompts
-	local function addPrompt(pp)
-		if STATE.IS_IN_SET[pp] then return end
-		STATE.IS_IN_SET[pp] = true
-		STATE.ALL_PROMPTS[#STATE.ALL_PROMPTS+1] = pp
-	end
-	local function remPrompt(pp)
-		if not STATE.IS_IN_SET[pp] then return end
-		STATE.IS_IN_SET[pp] = nil
-	end
-	for _,d in ipairs(Workspace:GetDescendants()) do
-		if d:IsA("ProximityPrompt") then addPrompt(d) end
-	end
+	local function addPrompt(pp) if STATE.IS_IN_SET[pp] then return end; STATE.IS_IN_SET[pp]=true; STATE.ALL_PROMPTS[#STATE.ALL_PROMPTS+1]=pp end
+	local function remPrompt(pp) if not STATE.IS_IN_SET[pp] then return end; STATE.IS_IN_SET[pp]=nil end
+	for _,d in ipairs(Workspace:GetDescendants()) do if d:IsA("ProximityPrompt") then addPrompt(d) end end
 	Workspace.DescendantAdded:Connect(function(inst) if inst:IsA("ProximityPrompt") then addPrompt(inst) end end)
 	Workspace.DescendantRemoving:Connect(function(inst) if inst:IsA("ProximityPrompt") then remPrompt(inst) end end)
 
-	-- optional remote
 	local function findCollectSender()
 		if STATE.collectSender ~= nil then return end
-		if not CONFIG.USE_REMOTE_FIRST then STATE.collectSender = false return end
+		if not CONFIG.USE_REMOTE_FIRST then STATE.collectSender=false return end
 		local probes = {
 			function()
-				local mods = ReplicatedStorage:FindFirstChild("Modules")
-				if not mods then return end
+				local mods = ReplicatedStorage:FindFirstChild("Modules"); if not mods then return end
 				local rem = mods:FindFirstChild("Remotes")
 				if rem and rem:IsA("ModuleScript") then
 					local ok,tbl = pcall(require, rem)
@@ -1938,10 +1938,9 @@ do
 			end
 		}
 		for _,p in ipairs(probes) do local ok,fn=pcall(p); if ok and type(fn)=="function" then STATE.collectSender=fn; notify("Collect.Remote détecté ✓",2); return end end
-		STATE.collectSender = false
+		STATE.collectSender=false
 	end
 
-	-- helpers
 	local function containsAny(s, list) for _,w in ipairs(list) do if s:find(w,1,true) then return true end end return false end
 	local function labelFor(pp)
 		local names, root = {}, pp.Parent
@@ -1973,11 +1972,7 @@ do
 	end
 
 	local function firePrompt(pp)
-		pcall(function()
-			pp.HoldDuration = 0
-			pp.RequiresLineOfSight = false
-			pp.MaxActivationDistance = math.huge
-		end)
+		pcall(function() pp.HoldDuration=0; pp.RequiresLineOfSight=false; pp.MaxActivationDistance=math.huge end)
 		local ok=false
 		if typeof(fireproximityprompt)=="function" then ok=pcall(fireproximityprompt, pp, 1); if not ok then ok=pcall(fireproximityprompt, pp) end end
 		if not ok then pcall(function() pp.Enabled=false; task.wait(); pp.Enabled=true end); ok=true end
@@ -2112,7 +2107,6 @@ do
 		Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0,8)
 		closeBtn.MouseButton1Click:Connect(function() gui.Enabled = false end)
 
-		-- drag
 		local dragging, dragStart, startPos = false, nil, nil
 		frame.InputBegan:Connect(function(i)
 			if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=true; dragStart=i.Position; startPos=frame.Position end
@@ -2146,7 +2140,6 @@ do
 		toggleRow(y, "Mode Turbo (cadence ++)", true, function(on) STATE.turbo = on end); y = y + 32
 		toggleRow(y, "Harvest Halloween ONLY", false, function(on) STATE.halloweenOnly = on end); y = y + 32
 
-		-- Limite
 		local limitRow = Instance.new("Frame"); limitRow.Size=UDim2.new(1,-24,0,28); limitRow.Position=UDim2.new(0,12,0,y); limitRow.BackgroundTransparency=1; limitRow.Parent=frame
 		local limMinus=Instance.new("TextButton"); limMinus.Size=UDim2.new(0,28,0,28); limMinus.Text="−"; limMinus.Font=Enum.Font.GothamBold; limMinus.TextColor3=Color3.fromRGB(235,235,245); limMinus.BackgroundColor3=Color3.fromRGB(70,70,78); limMinus.Parent=limitRow; Instance.new("UICorner", limMinus).CornerRadius=UDim.new(0,8)
 		local limPlus=Instance.new("TextButton"); limPlus.Size=UDim2.new(0,28,0,28); limPlus.Position=UDim2.new(1,-92,0,0); limPlus.Text="+"; limPlus.Font=Enum.Font.GothamBold; limPlus.TextColor3=Color3.fromRGB(235,235,245); limPlus.BackgroundColor3=Color3.fromRGB(70,70,78); limPlus.Parent=limitRow; Instance.new("UICorner", limPlus).CornerRadius=UDim.new(0,8)
@@ -2158,7 +2151,6 @@ do
 		limReset.MouseButton1Click:Connect(function() STATE.runCount = 0; refreshLimit() end)
 		y = y + 32
 
-		-- Rayon
 		local radRow = Instance.new("Frame"); radRow.Size=UDim2.new(1,-24,0,28); radRow.Position=UDim2.new(0,12,0,y); radRow.BackgroundTransparency=1; radRow.Parent=frame
 		local radMinus=Instance.new("TextButton"); radMinus.Size=UDim2.new(0,28,0,28); radMinus.Text="−"; radMinus.Font=Enum.Font.GothamBold; radMinus.TextColor3=Color3.fromRGB(235,235,245); radMinus.BackgroundColor3=Color3.fromRGB(70,70,78); radMinus.Parent=radRow; Instance.new("UICorner", radMinus).CornerRadius=UDim.new(0,8)
 		local radPlus=Instance.new("TextButton"); radPlus.Size=UDim2.new(0,28,0,28); radPlus.Position=UDim2.new(1,-92,0,0); radPlus.Text="+"; radPlus.Font=Enum.Font.GothamBold; radPlus.TextColor3=Color3.fromRGB(235,235,245); radPlus.BackgroundColor3=Color3.fromRGB(70,70,78); radPlus.Parent=radRow; Instance.new("UICorner", radPlus).CornerRadius=UDim.new(0,8)
@@ -2167,7 +2159,6 @@ do
 		radMinus.MouseButton1Click:Connect(function() STATE.scanRadius = math.max(50,  STATE.scanRadius-25); refreshRadius() end)
 		radPlus.MouseButton1Click:Connect(function() STATE.scanRadius = math.min(600, STATE.scanRadius+25); refreshRadius() end)
 
-		-- Stats
 		local stats = Instance.new("TextLabel"); stats.Size=UDim2.new(1,-24,0,22); stats.Position=UDim2.new(0,12,1,-26); stats.BackgroundTransparency=1
 		stats.TextColor3=Color3.fromRGB(150,150,160); stats.Font=Enum.Font.Code; stats.TextXAlignment=Enum.TextXAlignment.Left; stats.TextSize=14; stats.Parent=frame
 		RunService.RenderStepped:Connect(function()
@@ -2186,225 +2177,14 @@ do
 	end
 end
 
--- =============== Pet Freezer (PetMover) – ouverture à la demande ===============
-local function EnsurePetFreezerUI()
-	-- Évite doublons
-	local pg = LP:WaitForChild("PlayerGui")
-	local existing = pg:FindFirstChild("PetMoverUI")
-	if existing then existing.Enabled = true return existing end
-
-	-- >>>> Début du constructeur UI du Pet Freezer (adapté pour ne s’ouvrir que sur appel)
-	-- (Code compacté & adapté depuis ton "pet freezer.lua")
-	local UIS = UserInputService
-	local SG  = StarterGui
-	local RS  = RunService
-
-	local sg = Instance.new("ScreenGui")
-	sg.Name = "PetMoverUI"
-	sg.ResetOnSpawn = false
-	sg.IgnoreGuiInset = false
-	sg.Parent = pg
-
-	local function notify(msg)
-		pcall(function() SG:SetCore("SendNotification", {Title="PetMover", Text=tostring(msg), Duration=2}) end)
-	end
-	local function getChar()
-		local ch = LP.Character or LP.CharacterAdded:Wait()
-		ch:WaitForChild("HumanoidRootPart"); ch:WaitForChild("Humanoid")
-		return ch
-	end
-
-	-- bouton flottant pour réouvrir si la fenêtre est fermée
-	local reopen = Instance.new("TextButton")
-	reopen.Name="Reopen"
-	reopen.Text="🐾"
-	reopen.TextScaled=true
-	reopen.AutoButtonColor=true
-	reopen.Visible=true
-	reopen.Size=UDim2.fromOffset(56,56)
-	reopen.Position=UDim2.fromOffset(16, (pg.AbsoluteSize and (pg.AbsoluteSize.Y-72)) or 500)
-	reopen.BackgroundColor3=Color3.fromRGB(35,150,90)
-	reopen.TextColor3=Color3.fromRGB(245,245,250)
-	reopen.Parent=sg
-	Instance.new("UICorner", reopen).CornerRadius = UDim.new(0,16)
-	pg:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-		if pg.AbsoluteSize then reopen.Position = UDim2.fromOffset(16, pg.AbsoluteSize.Y - 72) end
-	end)
-
-	local frame = Instance.new("Frame")
-	frame.Name="Main"; frame.Active=true
-	frame.Size=UDim2.fromOffset(640, 520)
-	frame.Position=UDim2.fromOffset(120, 120)
-	frame.BackgroundColor3=Color3.fromRGB(24,24,28)
-	frame.BorderSizePixel=0
-	frame.Parent=sg
-	Instance.new("UICorner", frame).CornerRadius = UDim.new(0,14)
-
-	local titleBar = Instance.new("Frame", frame)
-	titleBar.Size=UDim2.new(1,0,0,44)
-	titleBar.BackgroundColor3=Color3.fromRGB(32,32,40)
-	Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0,14)
-
-	local title = Instance.new("TextLabel", titleBar)
-	title.BackgroundTransparency=1
-	title.Text="🐾 Pet Freezer / PetMover"
-	title.TextColor3=Color3.fromRGB(245,245,250)
-	title.Font=Enum.Font.GothamBold
-	title.TextSize=18
-	title.TextXAlignment=Enum.TextXAlignment.Left
-	title.Size=UDim2.new(1,-52,1,0)
-	title.Position=UDim2.fromOffset(12,0)
-
-	local closeBtn = Instance.new("TextButton", titleBar)
-	closeBtn.Text="✕"; closeBtn.TextScaled=true
-	closeBtn.Size=UDim2.fromOffset(40,40)
-	closeBtn.Position=UDim2.new(1,-44,0,2)
-	closeBtn.BackgroundColor3=Color3.fromRGB(60,25,25)
-	closeBtn.TextColor3=Color3.fromRGB(245,245,250)
-	Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0,12)
-
-	-- drag
-	do
-		local dragging=false; local dragStart; local startPos
-		local function clamp(x,y) local s=pg.AbsoluteSize; local w=frame.AbsoluteSize.X; local h=frame.AbsoluteSize.Y
-			return math.clamp(x,0,math.max(0,s.X-w)), math.clamp(y,0,math.max(0,s.Y-h)) end
-		local function upd(i) local d=i.Position-dragStart; local nx,ny=clamp(startPos.X.Offset+d.X, startPos.Y.Offset+d.Y); frame.Position=UDim2.fromOffset(nx,ny) end
-		titleBar.InputBegan:Connect(function(i)
-			if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
-				dragging=true; dragStart=i.Position; startPos=frame.Position
-			end
-		end)
-		UserInputService.InputEnded:Connect(function(i)
-			if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=false end
-		end)
-		UserInputService.InputChanged:Connect(function(i)
-			if dragging and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then upd(i) end
-		end)
-	end
-
-	-- Corps (3 gros boutons d'action)
-	local body = Instance.new("Frame", frame)
-	body.Size=UDim2.new(1,-16,1,-60)
-	body.Position=UDim2.fromOffset(8,52)
-	body.BackgroundTransparency=1
-
-	local function mkBtn(text, y, color)
-		local b = Instance.new("TextButton")
-		b.Size=UDim2.new(1,0,0,48)
-		b.Position=UDim2.new(0,0,0,y)
-		b.BackgroundColor3 = color
-		b.TextColor3=Color3.fromRGB(245,245,250)
-		b.Text=text
-		b.Font=Enum.Font.GothamBold
-		b.TextSize=16
-		b.Parent=body
-		Instance.new("UICorner", b).CornerRadius = UDim.new(0,10)
-		return b
-	end
-
-	local btnFreezeHere  = mkBtn("🧊 Freeze ICI (tous mes PetMover)", 0, Color3.fromRGB(80,140,200))
-	local btnTPAndFreeze = mkBtn("⚡ TP vers moi + 🧊 Freeze (ultra-serré)", 56, Color3.fromRGB(90,170,120))
-	local btnUnfreeze    = mkBtn("♻️ Unfreeze (débloquer)", 112, Color3.fromRGB(180,120,80))
-
-	-- Helpers PetPhysical
-	local function matchesOwnerValue(v)
-		if typeof(v)=="string" then return v==LP.Name end
-		if typeof(v)=="number" then return v==LP.UserId end
-		return false
-	end
-	local function isMyPetMover(root)
-		if not root then return false end
-		-- cherche un attribut/valeur "Owner"
-		local ok,owner = pcall(function() return root:GetAttribute("Owner") end)
-		if ok and matchesOwnerValue(owner) then return true end
-		for _,v in ipairs(root:GetDescendants()) do
-			if v:IsA("StringValue") or v:IsA("ObjectValue") or v:IsA("IntValue") then
-				local val = v.Value
-				if matchesOwnerValue(val) then return true end
-			end
-		end
-		return false
-	end
-	local function anyCFrame(inst)
-		if inst:IsA("Model") then local ok, cf = pcall(function() return inst:GetPivot() end); if ok and cf then return cf end
-			for _,d in ipairs(inst:GetDescendants()) do if d:IsA("BasePart") then return d.CFrame end end
-		elseif inst:IsA("BasePart") then return inst.CFrame
-		else for _,d in ipairs(inst:GetDescendants()) do if d:IsA("BasePart") then return d.CFrame end end end
-		return CFrame.new()
-	end
-	local function pivotTo(root, cf)
-		if root:IsA("Model") then pcall(function() root:PivotTo(cf) end) else
-			local bp = root:IsA("BasePart") and root or root:FindFirstChildWhichIsA("BasePart")
-			if bp then pcall(function() bp.CFrame = cf end) end
-		end
-	end
-
-	local function iterMyPetMovers(cb)
-		local roots = {workspace:FindFirstChild("PetsPhysical"), workspace:FindFirstChild("petsphysical"), workspace:FindFirstChild("Pets_Physical")}
-		local petsFolder = nil
-		for _,r in ipairs(roots) do if r then petsFolder=r break end end
-		if not petsFolder then notify("workspace.PetsPhysical introuvable"); return end
-		for _,child in ipairs(petsFolder:GetDescendants()) do
-			if child:IsA("Model") or child:IsA("Folder") then
-				if isMyPetMover(child) then cb(child) end
-			end
-		end
-	end
-
-	-- Actions
-	btnFreezeHere.MouseButton1Click:Connect(function()
-		local hrp = getChar():FindFirstChild("HumanoidRootPart")
-		if not hrp then return end
-		local targetCF = CFrame.new(hrp.Position + Vector3.new(0,0,0))
-		iterMyPetMovers(function(root)
-			pcall(function() root:SetAttribute("Frozen", true) end)
-			pivotTo(root, targetCF)
-		end)
-		notify("Pets: Freeze ici ✓")
-	end)
-	btnTPAndFreeze.MouseButton1Click:Connect(function()
-		local hrp = getChar():FindFirstChild("HumanoidRootPart")
-		if not hrp then return end
-		local base = hrp.CFrame
-		local offset = CFrame.new(0,0,-2)
-		local i=0
-		iterMyPetMovers(function(root)
-			i+=1
-			local cf = base * CFrame.new((i%3-1)*2, 0, -math.floor((i-1)/3)*2) * offset
-			pivotTo(root, cf); pcall(function() root:SetAttribute("Frozen", true) end)
-		end)
-		notify("Pets: TP + Freeze ultra-serré ✓")
-	end)
-	btnUnfreeze.MouseButton1Click:Connect(function()
-		iterMyPetMovers(function(root)
-			pcall(function() root:SetAttribute("Frozen", false) end)
-		end)
-		notify("Pets: Unfreeze ✓")
-	end)
-
-	-- Comportement des boutons
-	closeBtn.MouseButton1Click:Connect(function() frame.Visible=false end)
-	reopen.MouseButton1Click:Connect(function() frame.Visible=true end)
-
-	return sg
-	-- <<<< Fin Pet Freezer
-end
-
--- =============== Injecteurs de boutons ===============
-
--- (A) Mini Panel : remplace le bouton v4 par un bouton qui ouvre l’UI v5.5
+-- (A) Mini Panel : bouton pour ouvrir l’UI v5.5
 task.spawn(function()
 	while task.wait(0.5) do
 		local pg = LP:FindFirstChild("PlayerGui"); if not pg then continue end
-		local mini = pg:FindFirstChild("SaadMiniPanel") -- créé par ton script
-		if not mini or not mini.Enabled then
-			-- on tente quand même d'injecter si l'instance existe
-			mini = mini or pg:FindFirstChild("SaadMiniPanel")
-		end
+		local mini = pg:FindFirstChild("SaadMiniPanel")
 		if mini then
-			local frame = mini:FindFirstChildOfClass("Frame") -- root panel
+			local frame = mini:FindFirstChildOfClass("Frame")
 			if frame then
-				-- Row 1 (crée ou remplace le bouton gauche)
 				local container = frame:FindFirstChildWhichIsA("Frame", true) or frame
 				local row1 = nil
 				for _,ch in ipairs(container:GetChildren()) do
@@ -2431,42 +2211,14 @@ task.spawn(function()
 	end
 end)
 
--- (B) Player Tuner : ajoute un bouton "🐾 Pet Freezer"
-task.spawn(function()
-	while task.wait(0.5) do
-		local pg = LP:FindFirstChild("PlayerGui"); if not pg then continue end
-		local tuner = pg:FindFirstChild("PlayerTuner")
-		if tuner then
-			local mainFrame
-			for _,ch in ipairs(tuner:GetChildren()) do
-				if ch:IsA("Frame") then mainFrame = ch break end
-			end
-			if mainFrame then
-				local btn = mainFrame:FindFirstChild("PetFreezerBtn") or Instance.new("TextButton")
-				btn.Name = "PetFreezerBtn"
-				btn.Size = UDim2.fromOffset(150, 28)
-				btn.Position = UDim2.new(0, 10, 0, 306) -- sous les rangées existantes
-				btn.BackgroundColor3 = Color3.fromRGB(90,140,190)
-				btn.TextColor3 = Color3.fromRGB(255,255,255)
-				btn.Text = "🐾 Open Pet Freezer"
-				btn.Font = Enum.Font.GothamBold
-				btn.TextSize = 13
-				btn.Parent = mainFrame
-				btn.MouseButton1Click:Connect(function()
-					local g = EnsurePetFreezerUI()
-					g.Enabled = true
-				end)
-				break
-			end
-		end
-	end
-end)
+-- (B) **SUPPRIMÉ** : injection d’un bouton bleu dans le Player Tuner (retiré selon demande)
 
--- (C) Raccourci clavier facultatif: Alt+J -> ouvre l'UI v5.5
+-- (C) Raccourci: Alt+J -> ouvre l'UI v5.5
 UserInputService.InputBegan:Connect(function(i, gp)
 	if gp then return end
 	if (i.KeyCode == Enum.KeyCode.J) and (UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt) or UserInputService:IsKeyDown(Enum.KeyCode.RightAlt)) then
 		local g = FH55.ensureUI(); g.Enabled = true
 	end
 end)
--- ====================== FIN DU PATCH ======================
+
+-- ====================== FIN ======================
