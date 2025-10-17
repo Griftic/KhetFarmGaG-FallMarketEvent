@@ -6,12 +6,12 @@
 -- - Seeds inclut "Great Pumpkin" — auto-buy actif (BuySeedStock "Shop", <Seed>)
 -- - Bouton: Buy "Level Up Lollipop" x50 (essaie 2 noms possibles)
 -- - Mini Panel v3.5 (✕ fermer / ▭ réduire) :
---     • 🌾 Auto-Harvest v5.5 (nouveau) — SCAN rayon, turbo, stop à 200 ✔
+--     • 🌾 Auto-Harvest v5.5 — SCAN rayon, turbo, stop à 200 ✔ (+ Halloween ONLY)
 --     • Auto Harvest v2.4 (scan périodique) -> STOP auto 3s & backpack plein
 --     • Submit All (Cauldron) • Event Seeds (Spooky)
 --     • 🎃 Submit Halloween → Jack
 --     • 🧟 Event Pets/Eggs (Wolf, Spooky Egg, Reaper, Ghost Bear, Pumpkin Rat)
---     • 🌀 FARM AUTO (Harvest 10s → Submit All → wait 30s → loop)
+--     • 🌀 FARM AUTO (Harvest 10s fiable → Submit All → wait 30s → loop)
 -- - Raccourcis: H = toggle Auto Harvest v2.4 • J = toggle Auto Harvest v5.5
 -- - ▶️ Player Tuner: bouton "🌾 Open Harvest v5 Panel"
 -- - Tous les panels sont LIBREMENT déplaçables (mobile/PC), sans verrou.
@@ -52,7 +52,7 @@ local SEEDS = {
 	"Pumpkin","Apple","Bamboo","Coconut","Cactus","Dragon Fruit","Mango","Grape","Mushroom",
 	"Pepper","Cacao","Beanstalk","Ember Lily","Sugar Apple","Burning Bud","Giant Pinecone",
 	"Elder Strawberry","Romanesco","Crimson Thorn",
-	"Great Pumpkin" -- 🎃 shop
+	"Great Pumpkin"
 }
 local GEARS = {
 	"Watering Can","Trading Ticket","Trowel","Recall Wrench","Basic Sprinkler","Advanced Sprinkler",
@@ -1037,6 +1037,24 @@ local function safeFirePrompt(prompt, holdCap)
 	VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
 end
 
+-- === Routine de harvest fiable pour FARM AUTO ===
+local function performTimedHarvest(seconds, radius, holdCap)
+	local dur = math.max(1, tonumber(seconds) or 10)
+	local r   = math.max(10, tonumber(radius)  or 26)
+	local hc  = tonumber(holdCap) or 0.25
+	local stopAt = os.clock() + dur
+	local total = 0
+	while os.clock() < stopAt do
+		local prompts = getNearbyPlantPrompts(r, true)
+		for _, p in ipairs(prompts) do
+			safeFirePrompt(p, hc)
+			total += 1
+		end
+		task.wait(0.12)
+	end
+	return total
+end
+
 -- =========================================================
 -- =================== AUTO HARVEST v2.4 ===================
 -- =========================================================
@@ -1107,11 +1125,8 @@ do
 		SCAN_RADIUS          = 200,
 	}
 
-	-- Keywords fruits/plantes
 	local FRUIT_KEYWORDS = { "berry","mushroom","pumpkin","apple","grape","melon","corn","tomato","carrot","coconut","cactus","dragon","mango","pepper","cacao","bean","bamboo","vine","root","strawberry","blueberry","watermelon","romanesco","pinecone","lily","tulip","thorn","bud" }
 	local NEG_ACTION     = { "buy","sell","open","talk","upgrade","use","feed","place","equip","shop" }
-
-	-- Liste Halloween pour filtrage dédié
 	local HALLOWEEN_KEYS = {
 		"banesberry","bloodred mushroom","blood-red mushroom","blood red mushroom","chicken feed",
 		"ghoul root","ghoulroot","great pumpkin","jack-o-lantern","jack o lantern","jack-o’-lantern","jack o’ lantern",
@@ -1121,7 +1136,7 @@ do
 	local STATE = {
 		enabled = false,
 		turbo = true,
-		halloweenOnly = false,   -- ✅ réintroduit
+		halloweenOnly = false,
 		stats = { scanned = 0, harvested = 0 },
 		runCount = 0,
 		runLimit = CONFIG.RUN_LIMIT,
@@ -1283,10 +1298,9 @@ do
 		end
 
 		local y = 40
-		toggleRow(y, "Activer Auto-Harvest", false, function(on) STATE.enabled = on; if on then STATE.runCount = 0; task.spawn(mainLoop) end end); y = y + 32
-		toggleRow(y, "Mode Turbo (cadence ++)", true, function(on) STATE.turbo = on end); y = y + 32
-		-- ✅ Nouveau bouton : Halloween only
-		toggleRow(y, "Harvest Halloween ONLY", false, function(on) STATE.halloweenOnly = on end); y = y + 32
+		toggleRow(y, "Activer Auto-Harvest", false, function(on) if on then AutoHarv5.start() else AutoHarv5.stop() end end); y = y + 32
+		toggleRow(y, "Mode Turbo (cadence ++)", true, function(on) end); y = y + 32
+		toggleRow(y, "Harvest Halloween ONLY", false, function(on) end); y = y + 32
 
 		STATE.ui = gui
 		return gui
@@ -1539,6 +1553,7 @@ local function buildMiniPanel()
 	farmAutoBtn.Parent = rowAuto
 	rounded(farmAutoBtn, 8)
 
+	-- ======= FARM AUTO: Harvest 10s fiable -> Submit All -> wait 30s -> loop =======
 	local farmAutoEnabled = false
 	local function setFarmAuto(on)
 		if farmAutoEnabled == on then return end
@@ -1549,16 +1564,23 @@ local function buildMiniPanel()
 			msg("🌀 FARM AUTO ON • Harvest 10s → Submit All → wait 30s → loop.", Color3.fromRGB(180,230,180))
 			task.spawn(function()
 				while farmAutoEnabled do
-					AutoHarv24:start()
-					task.wait(10)
-					AutoHarv24:stop("FARM AUTO")
+					-- 1) Harvest fiable 10s
+					local harvested = performTimedHarvest(10, 26, 0.25)
+					if harvested <= 0 and farmAutoEnabled then
+						msg("🌾 Aucun prompt récolté — Retry 3s…", Color3.fromRGB(255,200,150))
+						harvested = performTimedHarvest(3, 26, 0.25)
+					end
+					-- 2) Submit All
+					if not farmAutoEnabled then break end
 					submitAllCauldron_Exact()
-					for i=1,30 do if not farmAutoEnabled then break end task.wait(1) end
+					-- 3) Pause 30s
+					local t=30
+					while farmAutoEnabled and t>0 do t-=1; task.wait(1) end
 				end
 				msg("🌀 FARM AUTO OFF.", Color3.fromRGB(230,200,180))
 			end)
 		else
-			AutoHarv24:stop("FARM AUTO OFF")
+			-- rien à stopper, la routine est ponctuelle
 		end
 	end
 	farmAutoBtn.MouseButton1Click:Connect(function() setFarmAuto(not farmAutoEnabled) end)
@@ -1598,7 +1620,6 @@ UserInputService.InputBegan:Connect(function(input, gp)
 	end
 end)
 
-gearGui = gearGui or Instance.new("ScreenGui")
 applyAutoScale(screenGui)
 applyAutoScale(gearGui)
-msg("✅ Saad Helper Pack chargé • Auto-buy Seeds/Gear/Eggs: ON (60s) • ⌘/Ctrl+clic TP • Mini Panel v3.5 (réduction ▭) • H=v2.4 • J=v5.5 (Halloween toggle).", Color3.fromRGB(170,230,255))
+msg("✅ Saad Helper Pack chargé • Auto-buy Seeds/Gear/Eggs: ON (60s) • ⌘/Ctrl+clic TP • Mini Panel v3.5 (réduction ▭) • H=v2.4 • J=v5.5 (Halloween toggle) • 🌀 Farm Auto fiabilisé.", Color3.fromRGB(170,230,255))
