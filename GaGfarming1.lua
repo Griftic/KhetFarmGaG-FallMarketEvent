@@ -5,13 +5,16 @@
 -- - Gear Panel: Sell, Submit Cauldron, Buy All Seeds/Gear/Eggs + Auto/60s ON
 -- - Seeds inclut "Great Pumpkin" — auto-buy actif (BuySeedStock "Shop", <Seed>)
 -- - Bouton: Buy "Level Up Lollipop" x50 (essaie 2 noms possibles)
--- - Mini Panel v3.4 (✕ fermer) :
+-- - Mini Panel v3.5 (✕ fermer / ▭ réduire) :
 --     • 🌾 Auto-Harvest v5.5 (nouveau) — SCAN rayon, turbo, stop à 200 ✔
 --     • Auto Harvest v2.4 (scan périodique) -> STOP auto 3s & backpack plein
---     • Submit All (Cauldron) • Event Seeds (Spooky) • 🧟 Event Shop (Creepy)
---     • 🎯 FARM AUTO: TP centre ferme → v2.4 (5s) → Submit Halloween → boucle 30s
+--     • Submit All (Cauldron) • Event Seeds (Spooky)
+--     • 🎃 Submit Halloween → Jack
+--     • 🧟 Event Pets/Eggs (Wolf, Spooky Egg, Reaper, Ghost Bear, Pumpkin Rat)
+--     • 🌀 FARM AUTO (Harvest 10s → Submit All → wait 30s → loop)
 -- - Raccourcis: H = toggle Auto Harvest v2.4 • J = toggle Auto Harvest v5.5
 -- - ▶️ Player Tuner: bouton "🌾 Open Harvest v5 Panel"
+-- - Tous les panels sont LIBREMENT déplaçables (mobile/PC), sans verrou.
 -- =====================================================================
 
 --// Services
@@ -98,22 +101,32 @@ local function fmtTime(sec) sec=math.max(0,math.floor(sec+0.5)) local m=math.flo
 local function lower(s) return typeof(s)=="string" and string.lower(s) or "" end
 local function norm(s) s = lower(s or "") s = s:gsub("%p"," "):gsub("%s+"," ") return s end
 
--- Clamp UI à l’écran
-local function clampOnScreen(frame)
-	task.defer(function()
-		if not frame or not frame.Parent then return end
-		local cam = workspace.CurrentCamera
-		if not cam then return end
-		local vp = cam.ViewportSize
-		local abs = frame.AbsoluteSize
-		local px = math.clamp(frame.AbsolutePosition.X, 0, math.max(0, vp.X - abs.X))
-		local py = math.clamp(frame.AbsolutePosition.Y, 0, math.max(0, vp.Y - abs.Y))
-		frame.Position = UDim2.fromOffset(px, py)
+-- ====== Free Drag helper (mobile/PC) — no clamp ======
+local function makeDraggable(frame, handle)
+	frame.Active = true; frame.Selectable = true
+	handle = handle or frame
+	handle.Active = true; handle.Selectable = true
+	local dragging, dragStart, startPos = false, nil, nil
+	handle.InputBegan:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStart = i.Position
+			startPos  = frame.Position
+			i.Changed:Connect(function()
+				if i.UserInputState == Enum.UserInputState.End then dragging = false end
+			end)
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(i)
+		if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+			local delta = i.Position - dragStart
+			frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+		end
 	end)
 end
 
--- AutoScale
-local function applyAutoScale(screenGuiX, clampTargets)
+-- AutoScale (sans clamp)
+local function applyAutoScale(screenGuiX)
 	local cam = workspace.CurrentCamera
 	local scaleObj = screenGuiX:FindFirstChild("AutoScale") or Instance.new("UIScale")
 	scaleObj.Name = "AutoScale"
@@ -127,10 +140,7 @@ local function applyAutoScale(screenGuiX, clampTargets)
 		if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then s = s * 0.9 end
 		return math.clamp(s, 0.55, 1.0)
 	end
-	local function refresh()
-		scaleObj.Scale = computeScale()
-		if clampTargets then for _, guiObj in ipairs(clampTargets) do if guiObj and guiObj.Parent then clampOnScreen(guiObj) end end end
-	end
+	local function refresh() scaleObj.Scale = computeScale() end
 	refresh()
 	if cam then cam:GetPropertyChangedSignal("ViewportSize"):Connect(refresh) end
 	UserInputService:GetPropertyChangedSignal("TouchEnabled"):Connect(refresh)
@@ -150,21 +160,16 @@ local function getBuySeedRemote()        local r=safeWait({"GameEvents","BuySeed
 local function getBuyGearRemote()        local r=safeWait({"GameEvents","BuyGearStock"},2)                  return (r and r:IsA("RemoteEvent")) and r or nil end
 local function getBuyPetEggRemote()      local r=safeWait({"GameEvents","BuyPetEgg"},2)                     return (r and r:IsA("RemoteEvent")) and r or nil end
 local function getWitchesSubmitRemote()  local r=safeWait({"GameEvents","WitchesBrew","SubmitItemToCauldron"},2) return (r and r:IsA("RemoteFunction")) and r or nil end
--- NEW: Event Shop (Spooky/Creepy)
-local function getBuyEventShopRemote()
-	local r = safeWait({"GameEvents","BuyEventShopStock"},2)
-	if not r then r = safeWait({"GameEvents","FallMarketEvent","BuyEventShopStock"},2) end
-	return (r and r:IsA("RemoteEvent")) and r or nil
-end
-local function buyEventShop(item, category)
-	local r = getBuyEventShopRemote()
-	if not r then msg("❌ Remote BuyEventShopStock introuvable.", Color3.fromRGB(255,120,120)); return end
-	local ok, err = pcall(function() r:FireServer(item, category) end)
-	if ok then
-		msg(("🛍️ Event Shop: %s → %s OK."):format(tostring(category), tostring(item)), Color3.fromRGB(180,230,180))
-	else
-		msg(("⚠️ Event Shop FAIL: %s → %s (%s)"):format(tostring(category), tostring(item), tostring(err)), Color3.fromRGB(255,160,140))
-	end
+
+-- === Submit All (exactement comme demandé) ===
+local function submitAllCauldron_Exact()
+	local ok, err = pcall(function()
+		local args = { [1] = "All" }
+		local rf = ReplicatedStorage:WaitForChild("GameEvents"):WaitForChild("WitchesBrew"):WaitForChild("SubmitItemToCauldron")
+		rf:InvokeServer(unpack(args))
+	end)
+	if ok then msg("🧪 Cauldron: Submit All OK (Exact).", Color3.fromRGB(180,230,200)) else msg("Cauldron error (Exact): "..tostring(err), Color3.fromRGB(255,160,140)) end
+	return ok
 end
 
 -- =========================================================
@@ -177,7 +182,7 @@ local CAP_NAMES   = { "capacity","cap","max","maxcapacity","maxamount","limit","
 local function nameMatchAny(nm, list) nm = lower(nm) for _, k in ipairs(list) do if nm == k or string.find(nm, k, 1, true) then return true end end return false end
 local function tryAutoBindBackpack()
 	BackpackCountValue, BackpackCapValue = nil, nil
-	local roots = { player, player:FindFirstChild("PlayerGui"), player:FindFirstChild("PlayerScripts"), ReplicatedStorage, Workspace }
+	local roots = { player, player:FindFirstChild("PlayerGui"), player:FindChild("PlayerScripts"), ReplicatedStorage, Workspace }
 	local bestParent, bestScore = nil, -1
 	local candidateMap = {}
 	for _, root in ipairs(roots) do
@@ -243,7 +248,7 @@ local function BindMetaCtrlClickTeleport(opts)
 		local d = (pos - hrp.Position).Magnitude
 		local t = math.max(d / tpSpeed, 0.05)
 		TweenService:Create(hrp, TweenInfo.new(t, Enum.EasingStyle.Linear), {CFrame = CFrame.new(pos)}):Play()
-	end
+	 end
 	local function metaOrCtrlDown()
 		return UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
 			or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
@@ -264,7 +269,6 @@ local _clickTPConn = BindMetaCtrlClickTeleport({ instant=false, tpSpeed=120, yOf
 -- =========================================================
 local MAX_TRIES_PER_SEED, MAX_TRIES_PER_GEAR = 5, 5
 
--- 🔧 achat via BuySeedStock("Shop", <Seed>)
 local function buyAllSeedsWorker()
 	local r = getBuySeedRemote(); if not r then msg("❌ BuySeedStock introuvable.", Color3.fromRGB(255,120,120)); return end
 	msg("🌱 Achat: toutes les graines… (Shop)")
@@ -299,7 +303,6 @@ local function buyAllEggsWorker()
 	msg("🎉 Eggs terminé.")
 end
 
--- Lollipop x50
 local function buyLollipop50()
 	local r = getBuyGearRemote(); if not r then msg("❌ BuyGearStock introuvable.", Color3.fromRGB(255,120,120)); return end
 	msg("🍭 Achat: Level Up Lollipop x50 …")
@@ -416,34 +419,6 @@ end)
 -- =========================================================
 -- ====================== UI Helper ========================
 -- =========================================================
-local function makeDraggable(frame, handle)
-	frame.Active = true; frame.Selectable = true
-	handle.Active = true; handle.Selectable = true
-	local dragging = false
-	local dragStart, startPos, dragInputId
-	local function update(input)
-		local delta = input.Position - dragStart
-		frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-	end
-	local function begin(input)
-		dragging = true
-		dragStart = input.Position
-		startPos = frame.Position
-		dragInputId = input
-		input.Changed:Connect(function()
-			if input.UserInputState == Enum.UserInputState.End then dragging = false; clampOnScreen(frame) end
-		end)
-	end
-	handle.InputBegan:Connect(function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then begin(i) end
-	end)
-	handle.InputChanged:Connect(function(i)
-		if i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch then if dragging then update(i) end end
-	end)
-	UserInputService.InputChanged:Connect(function(i)
-		if dragging and (i == dragInputId or i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then update(i) end
-	end)
-end
 local function rounded(obj, r) local ui = Instance.new("UICorner"); ui.CornerRadius = UDim.new(0, r or 8); ui.Parent = obj; return ui end
 local function tween(obj, props, t, style, dir) local info = TweenInfo.new(t or 0.18, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out) return TweenService:Create(obj, info, props) end
 
@@ -456,7 +431,6 @@ screenGui.ResetOnSpawn = false
 screenGui.IgnoreGuiInset = false
 screenGui.Parent = playerGui
 
--- Hauteur ajustée (Pet row supprimée, v5 Panel conservé)
 local mainFrame = Instance.new("Frame")
 mainFrame.Size = UDim2.fromOffset(320, 392)
 mainFrame.Position = UDim2.fromScale(0.02, 0.04)
@@ -567,10 +541,10 @@ local function createSlider(parent, y, labelText, minValue, maxValue, step, init
 	local dragging = false
 	local function updateFromX(x) local ap,as = track.AbsolutePosition.X, track.AbsoluteSize.X; if as<=0 then return end; local pct = math.max(0, math.min(1, (x-ap)/as)); local val = minValue + pct*(maxValue-minValue); setValue(val, true) end
 	track.InputBegan:Connect(function(i)
-		if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=true; updateFromX(i.Position.X) i.Changed:Connect(function() if i.UserInputState==Enum.UserInputState.End then dragging=false; clampOnScreen(mainFrame) end end) end
+		if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=true; updateFromX(i.Position.X) i.Changed:Connect(function() if i.UserInputState==Enum.UserInputState.End then dragging=false end end) end
 	end)
 	knob.InputBegan:Connect(function(i)
-		if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=true; updateFromX(i.Position.X) i.Changed:Connect(function() if i.UserInputState==Enum.UserInputState.End then dragging=false; clampOnScreen(mainFrame) end end) end
+		if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=true; updateFromX(i.Position.X) i.Changed:Connect(function() if i.UserInputState==Enum.UserInputState.End then dragging=false end end) end
 	end)
 	UserInputService.InputChanged:Connect(function(i)
 		if dragging and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then updateFromX(i.Position.X) end
@@ -583,7 +557,6 @@ local speedSlider   = createSlider(content, 0,   "Walk Speed (16–58)",   16, 5
 local gravitySlider = createSlider(content, 70,  "Gravity (37.5–196.2)", 37.5,196.2, 0.1, currentGravity, applyGravity, 1)
 local jumpSlider    = createSlider(content, 140, "Jump Power (45–82.5)", 45, 82.5, 0.5, currentJump,    applyJump,    1)
 
--- Row 1 Buttons
 local buttonsRow = Instance.new("Frame"); buttonsRow.Size = UDim2.new(1, 0, 0, 36); buttonsRow.Position = UDim2.new(0, 0, 0, 200); buttonsRow.BackgroundTransparency = 1; buttonsRow.Parent = content
 local resetBtn = Instance.new("TextButton")
 resetBtn.Size = UDim2.new(0.33, -6, 1, 0); resetBtn.Position = UDim2.new(0, 0, 0, 0)
@@ -598,7 +571,6 @@ toggleGearBtn.Size = UDim2.new(0.33, 0, 1, 0); toggleGearBtn.Position = UDim2.ne
 toggleGearBtn.BackgroundColor3 = Color3.fromRGB(60, 180, 60); toggleGearBtn.TextColor3 = Color3.fromRGB(255,255,255)
 toggleGearBtn.Text = "🛒 Toggle Gear Panel"; toggleGearBtn.Font = Enum.Font.GothamBold; toggleGearBtn.TextSize = 13; toggleGearBtn.Parent = buttonsRow; rounded(toggleGearBtn,8)
 
--- Row 2: Anti-AFK + Open Mini Panel
 local miscRow = Instance.new("Frame"); miscRow.Size = UDim2.new(1, 0, 0, 36); miscRow.Position = UDim2.new(0, 0, 0, 236); miscRow.BackgroundTransparency = 1; miscRow.Parent = content
 antiAFKBtn = Instance.new("TextButton")
 antiAFKBtn.Size = UDim2.new(0.48, -4, 1, 0); antiAFKBtn.Position = UDim2.new(0, 0, 0, 0)
@@ -609,7 +581,6 @@ openMiniBtn.Size = UDim2.new(0.52, 0, 1, 0); openMiniBtn.Position = UDim2.new(0.
 openMiniBtn.BackgroundColor3 = Color3.fromRGB(140, 110, 200); openMiniBtn.TextColor3 = Color3.fromRGB(255,255,255)
 openMiniBtn.Text = "⚙️ Open Saad Mini Panel"; openMiniBtn.Font = Enum.Font.GothamBold; openMiniBtn.TextSize = 13; openMiniBtn.Parent = miscRow; rounded(openMiniBtn,8)
 
--- Row 3: Ouvrir Panel v5.5 (remonté)
 local v5Row = Instance.new("Frame"); v5Row.Size = UDim2.new(1, 0, 0, 36); v5Row.Position = UDim2.new(0, 0, 0, 272); v5Row.BackgroundTransparency = 1; v5Row.Parent = content
 local openV5Btn = Instance.new("TextButton")
 openV5Btn.Size = UDim2.new(1, 0, 1, 0); openV5Btn.Position = UDim2.new(0, 0, 0, 0)
@@ -621,7 +592,6 @@ openV5Btn.TextSize = 13
 openV5Btn.Parent = v5Row
 rounded(openV5Btn,8)
 
--- Row 4: Hint (remonté)
 local hintRow = Instance.new("TextLabel")
 hintRow.Size = UDim2.new(1, 0, 0, 22); hintRow.Position = UDim2.new(0, 0, 0, 308)
 hintRow.BackgroundTransparency = 1; hintRow.TextXAlignment = Enum.TextXAlignment.Left
@@ -629,7 +599,6 @@ hintRow.Font = Enum.Font.Gotham; hintRow.TextSize = 12; hintRow.TextColor3 = Col
 hintRow.Text = "⌘/Ctrl + clic = TP • H: Harvest v2.4  •  J: Harvest v5.5 (turbo + stop 200)"
 hintRow.Parent = content
 
--- Anti-AFK Manager (toggle fiable)
 local function setAntiAFK(enabled)
 	if enabled == antiAFKEnabled then return end
 	antiAFKEnabled = enabled
@@ -660,13 +629,14 @@ local function setAntiAFK(enabled)
 end
 antiAFKBtn.MouseButton1Click:Connect(function() setAntiAFK(not antiAFKEnabled) end)
 
--- ===== Boutons Player Tuner =====
 local function resetAll()
 	resetDefaults()
 	speedSlider.set(DEFAULT_WALKSPEED); gravitySlider.set(DEFAULT_GRAVITY); jumpSlider.set(DEFAULT_JUMPPOWER)
 end
 resetBtn.MouseButton1Click:Connect(resetAll)
 
+local isNoclipping = false
+local noclipConnection = nil
 noclipBtn.MouseButton1Click:Connect(function()
 	isNoclipping = not isNoclipping
 	if isNoclipping then
@@ -714,7 +684,7 @@ gearTitleBar.Parent = gearFrame
 rounded(gearTitleBar,10)
 
 local gearTitle = Instance.new("TextLabel")
-gearTitle.Size = UDim2.new(1, -40, 1, 0)
+gearTitle.Size = UDim2.new(1, -60, 1, 0)
 gearTitle.Position = UDim2.new(0, 10, 0, 0)
 gearTitle.BackgroundTransparency = 1
 gearTitle.TextColor3 = Color3.fromRGB(255,255,255)
@@ -735,6 +705,17 @@ gearClose.TextSize = 12
 gearClose.Parent = gearTitleBar
 rounded(gearClose,0)
 
+local gearMin = Instance.new("TextButton")
+gearMin.Size = UDim2.fromOffset(20, 20)
+gearMin.Position = UDim2.new(1, -50, 0, 4)
+gearMin.BackgroundColor3 = Color3.fromRGB(100, 100, 120)
+gearMin.TextColor3 = Color3.fromRGB(255,255,255)
+gearMin.Text = "▭"
+gearMin.Font = Enum.Font.GothamBold
+gearMin.TextSize = 12
+gearMin.Parent = gearTitleBar
+rounded(gearMin,0)
+
 local gearContent = Instance.new("Frame")
 gearContent.Size = UDim2.new(1, -16, 1, -40)
 gearContent.Position = UDim2.new(0, 8, 0, 36)
@@ -743,7 +724,6 @@ gearContent.Parent = gearFrame
 
 makeDraggable(gearFrame, gearTitleBar)
 
--- Gear content
 local tpGear = Instance.new("TextButton")
 tpGear.Size = UDim2.new(1, 0, 0, 30)
 tpGear.Position = UDim2.new(0, 0, 0, 0)
@@ -777,7 +757,6 @@ sellBtn.TextSize = 12
 sellBtn.Parent = gearContent
 rounded(sellBtn,8)
 
--- Submit All (Cauldron)
 local submitCauldronBtn = Instance.new("TextButton")
 submitCauldronBtn.Size = UDim2.new(1, 0, 0, 26)
 submitCauldronBtn.Position = UDim2.new(0, 0, 0, 94)
@@ -789,7 +768,6 @@ submitCauldronBtn.TextSize = 12
 submitCauldronBtn.Parent = gearContent
 rounded(submitCauldronBtn,8)
 
--- Seeds row
 local seedsRow = Instance.new("Frame")
 seedsRow.Size = UDim2.new(1, 0, 0, 26)
 seedsRow.Position = UDim2.new(0, 0, 0, 126)
@@ -829,7 +807,6 @@ seedsTimerLabel.TextSize = 12
 seedsTimerLabel.Parent = seedsRow
 rounded(seedsTimerLabel,8)
 
--- Gear row
 local gearRow = Instance.new("Frame")
 gearRow.Size = UDim2.new(1, 0, 0, 26)
 gearRow.Position = UDim2.new(0, 0, 0, 158)
@@ -869,7 +846,6 @@ gearTimerLabel.TextSize = 12
 gearTimerLabel.Parent = gearRow
 rounded(gearTimerLabel,8)
 
--- EGGS row
 local eggsRow = Instance.new("Frame")
 eggsRow.Size = UDim2.new(1, 0, 0, 26)
 eggsRow.Position = UDim2.new(0, 0, 0, 190)
@@ -909,7 +885,6 @@ eggsTimerLabel.TextSize = 12
 eggsTimerLabel.Parent = eggsRow
 rounded(eggsTimerLabel,8)
 
--- Lollipop x50
 local lolliBtn = Instance.new("TextButton")
 lolliBtn.Size = UDim2.new(1, 0, 0, 26)
 lolliBtn.Position = UDim2.new(0, 0, 0, 222)
@@ -921,7 +896,6 @@ lolliBtn.TextSize = 12
 lolliBtn.Parent = gearContent
 rounded(lolliBtn,8)
 
--- gear actions
 tpGear.MouseButton1Click:Connect(function() teleportTo(GEAR_SHOP_POS) end)
 sellBtn.MouseButton1Click:Connect(function()
 	local r = getSellInventoryRemote()
@@ -942,18 +916,11 @@ buyAllGearButton.MouseButton1Click:Connect(function() buyAllGearWorker();  gearT
 buyEggsButton.MouseButton1Click:Connect(function() buyAllEggsWorker();   eggsTimer = AUTO_PERIOD; updateTimerLabels() end)
 lolliBtn.MouseButton1Click:Connect(buyLollipop50)
 
-autoSeedsBtn.MouseButton1Click:Connect(function()
-	autoBuySeeds = not autoBuySeeds
-	autoSeedsBtn.BackgroundColor3 = autoBuySeeds and Color3.fromRGB(70,160,90) or Color3.fromRGB(80,90,120)
-	autoSeedsBtn.Text = autoBuySeeds and "Auto: ON" or "Auto: OFF"
-	if autoBuySeeds then task.spawn(function() buyAllSeedsWorker(); seedsTimer=AUTO_PERIOD; updateTimerLabels() end) end
-	updateTimerLabels()
-end)
-local function toggleGear() gearFrame.Visible = not gearFrame.Visible; if gearFrame.Visible then clampOnScreen(gearFrame) end end
+local function toggleGear() gearFrame.Visible = not gearFrame.Visible end
 gearClose.MouseButton1Click:Connect(function() gearFrame.Visible = false end)
+gearMin.MouseButton1Click:Connect(function() gearContent.Visible = not gearContent.Visible end)
 toggleGearBtn.MouseButton1Click:Connect(toggleGear)
 
--- live coords
 do
 	local acc = 0
 	RunService.RenderStepped:Connect(function(dt)
@@ -991,7 +958,7 @@ local function isPlantPrompt(prompt)
 	for _, kw in ipairs(PromptHeur.promptTextWhitelist) do
 		if string.find(action, kw, 1, true) or string.find(object, kw, 1, true) then
 			local node = prompt.Parent
-			for i=1,4 do if not node then break end; if containsAny(lower(node.Name), PromptHeur.plantExclude) then return false end; node = node.Parent end
+			for i=1,4 do if not node then break end; if containsAny(lower(node.Name), PromptHeur.promptBlacklist) then return false end; node = node.Parent end
 			return true
 		end
 	end
@@ -1125,102 +1092,44 @@ function AutoHarv24:stop(reason)
 end
 
 -- =========================================================
--- =============== AUTO HARVEST v5.5 (nouveau) =============
+-- =============== AUTO HARVEST v5.5 (avec Halloween) ======
 -- =========================================================
 local AutoHarv5 = { }
 do
-	--============= Services/short =============--
-	local LP = Players.LocalPlayer
-
-	--============= Utils =============--
-	local function notify(txt, dur)
-		pcall(function()
-			StarterGui:SetCore("SendNotification", { Title = "AutoHarvest v5.5", Text  = tostring(txt), Duration = dur or 2 })
-		end)
-		print("[AutoHarvest]", txt)
-	end
-	local function getChar()
-		local ch = LP.Character or LP.CharacterAdded:Wait()
-		ch:WaitForChild("HumanoidRootPart", 5)
-		return ch
-	end
-	local function alive()
-		local ch = LP.Character
-		local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-		return hum and hum.Health > 0
-	end
-	local function vdist(a, b) return (a-b).Magnitude end
 	local function containsAnyStrict(s, list) for _,w in ipairs(list) do if s:find(w, 1, true) then return true end end return false end
 
-	--============= Config/State =============--
 	local CONFIG = {
 		SCAN_INTERVAL_NORMAL = 0.12,
 		SCAN_INTERVAL_TURBO  = 0.020,
 		HARVEST_BURST        = 3,
 		MAX_PER_SCAN         = 24,
-		PROMPT_COOLDOWN      = 0.35,
-		RESCAN_COOLDOWN      = 0.60,
-		RUN_LIMIT            = 200,   -- stop après 200 récoltes
-		USE_REMOTE_FIRST     = true,
+		RUN_LIMIT            = 200,
 		SCAN_RADIUS          = 200,
 	}
-	local HALLOWEEN = { ["banesberry"]=true, ["bloodred mushroom"]=true, ["blood-red mushroom"]=true, ["blood red mushroom"]=true, ["chicken feed"]=true,
-		["ghoul root"]=true, ["ghoulroot"]=true, ["great pumpkin"]=true, ["jack-o-lantern"]=true, ["jack o lantern"]=true, ["jack-o’-lantern"]=true, ["jack o’ lantern"]=true,
-		["poison apple"]=true, ["poisoned apple"]=true, ["seer vine"]=true, ["seervine"]=true }
+
+	-- Keywords fruits/plantes
 	local FRUIT_KEYWORDS = { "berry","mushroom","pumpkin","apple","grape","melon","corn","tomato","carrot","coconut","cactus","dragon","mango","pepper","cacao","bean","bamboo","vine","root","strawberry","blueberry","watermelon","romanesco","pinecone","lily","tulip","thorn","bud" }
-	local NEG_ACTION = { "buy","sell","open","talk","upgrade","use","feed","place","equip","shop" }
+	local NEG_ACTION     = { "buy","sell","open","talk","upgrade","use","feed","place","equip","shop" }
+
+	-- Liste Halloween pour filtrage dédié
+	local HALLOWEEN_KEYS = {
+		"banesberry","bloodred mushroom","blood-red mushroom","blood red mushroom","chicken feed",
+		"ghoul root","ghoulroot","great pumpkin","jack-o-lantern","jack o lantern","jack-o’-lantern","jack o’ lantern",
+		"poison apple","poisoned apple","seer vine","seervine"
+	}
 
 	local STATE = {
 		enabled = false,
 		turbo = true,
-		halloweenOnly = false,
+		halloweenOnly = false,   -- ✅ réintroduit
 		stats = { scanned = 0, harvested = 0 },
 		runCount = 0,
 		runLimit = CONFIG.RUN_LIMIT,
 		scanRadius = CONFIG.SCAN_RADIUS,
-		processedAt = {},
-		recentTargets = {},
-		collectSender = nil,
 		ALL_PROMPTS = {},
 		IS_IN_SET = {},
 		ui = nil,
 	}
-
-	-- prompt cache
-	for _,d in ipairs(Workspace:GetDescendants()) do if d:IsA("ProximityPrompt") then STATE.IS_IN_SET[d]=true; table.insert(STATE.ALL_PROMPTS, d) end end
-	Workspace.DescendantAdded:Connect(function(inst) if inst:IsA("ProximityPrompt") then STATE.IS_IN_SET[inst]=true; table.insert(STATE.ALL_PROMPTS, inst) end end)
-	Workspace.DescendantRemoving:Connect(function(inst) if inst:IsA("ProximityPrompt") then STATE.IS_IN_SET[inst]=nil end end)
-
-	-- remote discovery
-	local function findCollectSender()
-		if STATE.collectSender ~= nil then return end
-		if not CONFIG.USE_REMOTE_FIRST then STATE.collectSender = false return end
-		local probes = {
-			function()
-				local mods = ReplicatedStorage:FindFirstChild("Modules"); if not mods then return end
-				local rem = mods:FindFirstChild("Remotes")
-				if rem and rem:IsA("ModuleScript") then
-					local ok,tbl = pcall(require, rem)
-					if ok and type(tbl)=="table" and tbl.Crops and tbl.Crops.Collect and tbl.Crops.Collect.Send then
-						return tbl.Crops.Collect.Send
-					end
-				end
-			end,
-			function()
-				for _,d in ipairs(ReplicatedStorage:GetChildren()) do
-					local rem = (d:IsA("ModuleScript") and d.Name=="Remotes") and d or (d:FindFirstChild("Remotes"))
-					if rem and rem:IsA("ModuleScript") then
-						local ok,tbl = pcall(require, rem)
-						if ok and type(tbl)=="table" and tbl.Crops and tbl.Crops.Collect and tbl.Crops.Collect.Send then
-							return tbl.Crops.Collect.Send
-						end
-					end
-				end
-			end
-		}
-		for _,p in ipairs(probes) do local ok,fn = pcall(p); if ok and type(fn)=="function" then STATE.collectSender=fn; notify("Collect.Remote détecté ✓", 2); return end end
-		STATE.collectSender = false
-	end
 
 	local function labelFor(pp)
 		local names = {}
@@ -1230,26 +1139,39 @@ do
 		for _,s in ipairs(names) do if #s > #best then best = s end end
 		return (best ~= "" and best) or (pp.ObjectText ~= "" and pp.ObjectText) or (pp.ActionText ~= "" and pp.ActionText) or "Unknown"
 	end
+
 	local function passHalloween(pp)
 		if not STATE.halloweenOnly then return true end
-		local nm = labelFor(pp):lower()
-		for key,_ in pairs(HALLOWEEN) do if nm == key or nm:find(key, 1, true) then return true end end
+		local obj = (pp.ObjectText or ""):lower()
+		local lbl = labelFor(pp):lower()
+		for _,k in ipairs(HALLOWEEN_KEYS) do
+			if obj:find(k,1,true) or lbl:find(k,1,true) then return true end
+		end
 		return false
 	end
+
 	local function isHarvestPrompt(pp)
 		if not (pp and pp:IsA("ProximityPrompt") and pp.Enabled) then return false end
 		local action = (pp.ActionText or ""):lower()
 		local object = (pp.ObjectText or ""):lower()
 		if action == "" and object == "" then object = labelFor(pp):lower() end
 		if containsAnyStrict(action, NEG_ACTION) or containsAnyStrict(object, NEG_ACTION) then return false end
-		if action:find("harvest", 1, true) then return true end
+		if action:find("harvest", 1, true) then
+			return passHalloween(pp)
+		end
 		if action:find("collect", 1, true) or action:find("pick", 1, true) or action:find("gather", 1, true) then
-			if STATE.halloweenOnly then return passHalloween(pp) end
 			local l = (object ~= "" and object) or labelFor(pp):lower()
-			return containsAnyStrict(l, FRUIT_KEYWORDS)
+			local isFruitLike = containsAnyStrict(l, FRUIT_KEYWORDS)
+			if not isFruitLike then return false end
+			return passHalloween(pp)
 		end
 		return false
 	end
+
+	for _,d in ipairs(Workspace:GetDescendants()) do if d:IsA("ProximityPrompt") then STATE.IS_IN_SET[d]=true; table.insert(STATE.ALL_PROMPTS, d) end end
+	Workspace.DescendantAdded:Connect(function(inst) if inst:IsA("ProximityPrompt") then STATE.IS_IN_SET[inst]=true; table.insert(STATE.ALL_PROMPTS, inst) end end)
+	Workspace.DescendantRemoving:Connect(function(inst) if inst:IsA("ProximityPrompt") then STATE.IS_IN_SET[inst]=nil end end)
+
 	local function firePrompt(pp)
 		pcall(function() pp.HoldDuration = 0; pp.RequiresLineOfSight = false; pp.MaxActivationDistance = math.huge end)
 		local ok = false
@@ -1275,44 +1197,30 @@ do
 	end
 	local function tryHarvest(pp)
 		if not (pp and pp.Parent) then return false end
-		local now = os.clock()
-		local last = STATE.processedAt[pp]
-		if last and (now - last) < CONFIG.PROMPT_COOLDOWN then return false end
-		STATE.processedAt[pp] = now
-		if STATE.collectSender == nil then findCollectSender() end
-		if STATE.collectSender then
-			local ok = pcall(function() STATE.collectSender(pp) end)
-			if ok and confirmSuccess(pp) then STATE.stats.harvested += 1; STATE.runCount += 1; return true end
-		end
 		for _=1, CONFIG.HARVEST_BURST do firePrompt(pp) end
 		if confirmSuccess(pp) then STATE.stats.harvested += 1; STATE.runCount += 1; return true end
 		return false
 	end
 
 	local function gather()
-		local ch = getChar()
-		local hrp = ch and ch:FindFirstChild("HumanoidRootPart"); if not hrp then return {} end
+		local hrp = getHRP(); if not hrp then return {} end
 		local list = {}
-		local now = os.clock()
 		local radius = STATE.scanRadius
 		for i = #STATE.ALL_PROMPTS, 1, -1 do
 			local pp = STATE.ALL_PROMPTS[i]
 			if not STATE.IS_IN_SET[pp] or not (pp and pp.Parent) then
 				table.remove(STATE.ALL_PROMPTS, i)
 			else
-				if isHarvestPrompt(pp) and passHalloween(pp) then
-					local lr = STATE.recentTargets[pp]
-					if (not lr) or ((now - lr) > CONFIG.RESCAN_COOLDOWN) then
-						local root = pp.Parent
-						local pos
-						if root:IsA("BasePart") then pos = root.Position
-						else
-							local bp = root:FindFirstChildWhichIsA("BasePart") or (root.Parent and root.Parent:FindFirstChildWhichIsA("BasePart"))
-							pos = bp and bp.Position or hrp.Position
-						end
-						local dd = vdist(hrp.Position, pos)
-						if dd <= radius then list[#list+1] = {pp = pp, dd = dd} end
+				if isHarvestPrompt(pp) then
+					local root = pp.Parent
+					local pos
+					if root:IsA("BasePart") then pos = root.Position
+					else
+						local bp = root:FindFirstChildWhichIsA("BasePart") or (root.Parent and root.Parent:FindFirstChildWhichIsA("BasePart"))
+						pos = bp and bp.Position or hrp.Position
 					end
+					local dd = (hrp.Position - pos).Magnitude
+					if dd <= radius then list[#list+1] = {pp = pp, dd = dd} end
 				end
 			end
 		end
@@ -1328,28 +1236,14 @@ do
 	local function mainLoop()
 		if running then return end
 		running = true
-		notify(("Auto-Harvest ON%s%s — cible: %d fruits (rayon %dst)"):format(
-			STATE.halloweenOnly and " [Halloween]" or "",
-			STATE.turbo and " [Turbo]" or "",
-			STATE.runLimit, STATE.scanRadius
-		), 3)
 		while STATE.enabled do
 			if STATE.runCount >= STATE.runLimit then
 				STATE.enabled = false
-				notify(("Run terminé: %d/%d récoltes. Auto-Harvest OFF."):format(STATE.runCount, STATE.runLimit), 3)
 				break
 			end
-			if alive() then
-				local list = gather()
-				local now = os.clock()
-				for _,pp in ipairs(list) do
-					STATE.recentTargets[pp] = now
-					task.spawn(function() pcall(tryHarvest, pp) end)
-				end
-				task.wait(STATE.turbo and CONFIG.SCAN_INTERVAL_TURBO or CONFIG.SCAN_INTERVAL_NORMAL)
-			else
-				task.wait(0.25)
-			end
+			local list = gather()
+			for _,pp in ipairs(list) do task.spawn(function() pcall(tryHarvest, pp) end) end
+			task.wait(STATE.turbo and CONFIG.SCAN_INTERVAL_TURBO or CONFIG.SCAN_INTERVAL_NORMAL)
 		end
 		running = false
 	end
@@ -1362,13 +1256,12 @@ do
 	function AutoHarv5.start() if not STATE.enabled then AutoHarv5.toggle() end end
 	function AutoHarv5.stop()  if STATE.enabled then AutoHarv5.toggle()  end end
 
-	-- ========= UI DÉDIÉE v5.5 =========
+	-- ========= UI DÉDIÉE v5.5 (avec toggle Halloween) =========
 	local function buildUI()
 		if STATE.ui and STATE.ui.Parent then STATE.ui.Enabled = true; return STATE.ui end
-		local pg  = LP:WaitForChild("PlayerGui")
-		local gui = Instance.new("ScreenGui"); gui.Name = "Saad_AutoHarvest_v55"; gui.IgnoreGuiInset = true; gui.ResetOnSpawn = false; gui.Parent = pg
+		local gui = Instance.new("ScreenGui"); gui.Name = "Saad_AutoHarvest_v55"; gui.IgnoreGuiInset = true; gui.ResetOnSpawn = false; gui.Parent = playerGui
 
-		local frame = Instance.new("Frame"); frame.Size = UDim2.new(0, 348, 0, 214); frame.Position = UDim2.new(0, 20, 0, 80); frame.BackgroundColor3 = Color3.fromRGB(22,22,26); frame.BorderSizePixel = 0; frame.Parent = gui
+		local frame = Instance.new("Frame"); frame.Size = UDim2.new(0, 348, 0, 246); frame.Position = UDim2.new(0, 20, 0, 80); frame.BackgroundColor3 = Color3.fromRGB(22,22,26); frame.BorderSizePixel = 0; frame.Parent = gui
 		Instance.new("UICorner", frame).CornerRadius = UDim.new(0,12)
 
 		local title = Instance.new("TextLabel"); title.BackgroundTransparency = 1; title.Size = UDim2.new(1, -40, 0, 28); title.Position = UDim2.new(0, 12, 0, 6); title.Text = "🌾 Auto-Harvest v5.5"; title.TextColor3 = Color3.fromRGB(235,235,245); title.Font = Enum.Font.GothamBold; title.TextXAlignment = Enum.TextXAlignment.Left; title.TextSize = 18; title.Parent = frame
@@ -1377,22 +1270,7 @@ do
 		Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0,8)
 		closeBtn.MouseButton1Click:Connect(function() gui.Enabled = false end)
 
-		-- drag
-		local dragging, dragStart, startPos = false, nil, nil
-		frame.InputBegan:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-				dragging = true; dragStart = input.Position; startPos  = frame.Position
-			end
-		end)
-		UserInputService.InputEnded:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
-		end)
-		UserInputService.InputChanged:Connect(function(input)
-			if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-				local delta = input.Position - dragStart
-				frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-			end
-		end)
+		makeDraggable(frame, frame)
 
 		local function toggleRow(y, label, default, cb)
 			local holder = Instance.new("Frame"); holder.Size = UDim2.new(1, -24, 0, 28); holder.Position = UDim2.new(0, 12, 0, y); holder.BackgroundTransparency = 1; holder.Parent = frame
@@ -1407,38 +1285,8 @@ do
 		local y = 40
 		toggleRow(y, "Activer Auto-Harvest", false, function(on) STATE.enabled = on; if on then STATE.runCount = 0; task.spawn(mainLoop) end end); y = y + 32
 		toggleRow(y, "Mode Turbo (cadence ++)", true, function(on) STATE.turbo = on end); y = y + 32
+		-- ✅ Nouveau bouton : Halloween only
 		toggleRow(y, "Harvest Halloween ONLY", false, function(on) STATE.halloweenOnly = on end); y = y + 32
-
-		-- Limite
-		local limitRow = Instance.new("Frame"); limitRow.Size = UDim2.new(1, -24, 0, 28); limitRow.Position = UDim2.new(0, 12, 0, y); limitRow.BackgroundTransparency = 1; limitRow.Parent = frame
-		local limMinus = Instance.new("TextButton"); limMinus.Size = UDim2.new(0, 28, 0, 28); limMinus.Text = "−"; limMinus.Font = Enum.Font.GothamBold; limMinus.TextColor3 = Color3.fromRGB(235,235,245); limMinus.BackgroundColor3 = Color3.fromRGB(70,70,78); limMinus.Parent = limitRow; Instance.new("UICorner", limMinus).CornerRadius = UDim.new(0,8)
-		local limPlus = Instance.new("TextButton"); limPlus.Size = UDim2.new(0, 28, 0, 28); limPlus.Position = UDim2.new(1, -92, 0, 0); limPlus.Text = "+"; limPlus.Font = Enum.Font.GothamBold; limPlus.TextColor3 = Color3.fromRGB(235,235,245); limPlus.BackgroundColor3 = Color3.fromRGB(70,70,78); limPlus.Parent = limitRow; Instance.new("UICorner", limPlus).CornerRadius = UDim.new(0,8)
-		local limReset = Instance.new("TextButton"); limReset.Size = UDim2.new(0, 60, 0, 28); limReset.Position = UDim2.new(1, -60, 0, 0); limReset.Text = "Reset"; limReset.Font = Enum.Font.Gotham; limReset.TextColor3 = Color3.fromRGB(235,235,245); limReset.BackgroundColor3 = Color3.fromRGB(45,45,55); limReset.Parent = limitRow; Instance.new("UICorner", limReset).CornerRadius = UDim.new(0,8)
-		local limLabel = Instance.new("TextLabel"); limLabel.BackgroundTransparency = 1; limLabel.Position = UDim2.new(0, 36, 0, 0); limLabel.Size = UDim2.new(1, -140, 1, 0); limLabel.Font = Enum.Font.Gotham; limLabel.TextColor3 = Color3.fromRGB(220,220,230); limLabel.TextXAlignment = Enum.TextXAlignment.Left; limLabel.TextSize = 16; limLabel.Parent = limitRow
-		local function refreshLimit() limLabel.Text = ("Limite: %d  |  Run: %d/%d"):format(STATE.runLimit, STATE.runCount, STATE.runLimit) end
-		refreshLimit()
-		limMinus.MouseButton1Click:Connect(function() STATE.runLimit = math.max(10, STATE.runLimit - 10); refreshLimit() end)
-		limPlus.MouseButton1Click:Connect(function() STATE.runLimit = math.min(1000, STATE.runLimit + 10); refreshLimit() end)
-		limReset.MouseButton1Click:Connect(function() STATE.runCount = 0; refreshLimit() end)
-
-		-- Rayon
-		y = y + 32
-		local radRow = Instance.new("Frame"); radRow.Size = UDim2.new(1, -24, 0, 28); radRow.Position = UDim2.new(0, 12, 0, y); radRow.BackgroundTransparency = 1; radRow.Parent = frame
-		local radMinus = Instance.new("TextButton"); radMinus.Size = UDim2.new(0, 28, 0, 28); radMinus.Text = "−"; radMinus.Font = Enum.Font.GothamBold; radMinus.TextColor3 = Color3.fromRGB(235,235,245); radMinus.BackgroundColor3 = Color3.fromRGB(70,70,78); radMinus.Parent = radRow; Instance.new("UICorner", radMinus).CornerRadius = UDim.new(0,8)
-		local radPlus = Instance.new("TextButton"); radPlus.Size = UDim2.new(0, 28, 0, 28); radPlus.Position = UDim2.new(1, -92, 0, 0); radPlus.Text = "+"; radPlus.Font = Enum.Font.GothamBold; radPlus.TextColor3 = Color3.fromRGB(235,235,245); radPlus.BackgroundColor3 = Color3.fromRGB(70,70,78); radPlus.Parent = radRow; Instance.new("UICorner", radPlus).CornerRadius = UDim.new(0,8)
-		local radLabel = Instance.new("TextLabel"); radLabel.BackgroundTransparency = 1; radLabel.Position = UDim2.new(0, 36, 0, 0); radLabel.Size = UDim2.new(1, -100, 1, 0); radLabel.Font = Enum.Font.Gotham; radLabel.TextColor3 = Color3.fromRGB(220,220,230); radLabel.TextXAlignment = Enum.TextXAlignment.Left; radLabel.TextSize = 16; radLabel.Parent = radRow
-		local function refreshRadius() radLabel.Text = ("Rayon de scan: %dst"):format(STATE.scanRadius) end
-		refreshRadius()
-		radMinus.MouseButton1Click:Connect(function() STATE.scanRadius = math.max(50, STATE.scanRadius - 25); refreshRadius() end)
-		radPlus.MouseButton1Click:Connect(function() STATE.scanRadius = math.min(600, STATE.scanRadius + 25); refreshRadius() end)
-
-		-- stats
-		local stats = Instance.new("TextLabel"); stats.Size = UDim2.new(1, -24, 0, 22); stats.Position = UDim2.new(0, 12, 1, -26); stats.BackgroundTransparency = 1
-		stats.Text = "Scan: 0 | Harvest: 0"; stats.TextColor3 = Color3.fromRGB(150,150,160); stats.Font = Enum.Font.Code; stats.TextXAlignment = Enum.TextXAlignment.Left; stats.TextSize = 14; stats.Parent = frame
-		RunService.RenderStepped:Connect(function()
-			stats.Text = string.format("Scan:%d | Harvest:%d | Run:%d/%d %s", STATE.stats.scanned or 0, STATE.stats.harvested or 0, STATE.runCount or 0, STATE.runLimit or 0, STATE.halloweenOnly and "🎃" or "🌱")
-			limLabel.Text = ("Limite: %d  |  Run: %d/%d"):format(STATE.runLimit, STATE.runCount, STATE.runLimit)
-		end)
 
 		STATE.ui = gui
 		return gui
@@ -1449,100 +1297,6 @@ do
 		if g then g.Enabled = true end
 	end
 end
-
--- =========================================================
--- ===================== FARM AUTO (nouveau) ===============
--- =========================================================
-local function findMyFarmFolder()
-	-- Structure attendue : Workspace > Farm > Farm > <FarmFolder>
-	local rootA = Workspace:FindFirstChild("Farm") or Workspace:FindFirstChild("Farms")
-	if not rootA then return nil end
-	local rootB = rootA:FindFirstChild("Farm") or rootA:FindFirstChild("Farms")
-	local base = rootB or rootA
-	for _, farm in ipairs(base:GetChildren()) do
-		if farm and farm:IsA("Folder") or farm:IsA("Model") then
-			local important = farm:FindFirstChild("Important")
-			local data = important and important:FindFirstChild("Data")
-			local ownerVal = data and data:FindFirstChild("Owner")
-			local val = ownerVal and (ownerVal.Value or ownerVal.Name)
-			if typeof(val) == "string" then
-				if val == player.Name or val == player.DisplayName then
-					return farm
-				end
-			end
-		end
-	end
-	return nil
-end
-
-local function getFarmCenterCFrame()
-	local farm = findMyFarmFolder()
-	if not farm then return nil end
-	-- Center_Point direct ou descendant
-	local cp = farm:FindFirstChild("Center_Point") or farm:FindFirstChild("CenterPoint") or farm:FindFirstChild("Center") 
-	if not cp then
-		for _, d in ipairs(farm:GetDescendants()) do
-			if (d.Name == "Center_Point" or d.Name == "CenterPoint" or d.Name == "Center") and d:IsA("BasePart") then
-				cp = d; break
-			end
-		end
-	end
-	if cp and cp:IsA("BasePart") then
-		return cp.CFrame
-	end
-	return nil
-end
-
-local FarmAuto = { enabled=false, thread=nil, btn=nil, lastCenter=nil }
-function FarmAuto:start()
-	if self.enabled then return end
-	self.enabled = true
-	if self.btn then
-		self.btn.BackgroundColor3 = Color3.fromRGB(90,170,90)
-		self.btn.Text = "🚜 FARM AUTO: ON"
-	end
-	msg("🚜 FARM AUTO activé — boucle 30s (TP centre → v2.4 (5s) → Submit Halloween).", Color3.fromRGB(180,230,180))
-	self.thread = task.spawn(function()
-		while self.enabled do
-			local cf = getFarmCenterCFrame()
-			if not cf then
-				msg("❌ Centre de ferme introuvable (Owner non trouvé).", Color3.fromRGB(255,120,120))
-				-- réessaye après 5s
-				for i=1,5 do if not self.enabled then break end; task.wait(1) end
-			else
-				self.lastCenter = cf
-				local pos = cf.Position + Vector3.new(0, 3, 0)
-				teleportTo(pos)
-				-- lancer v2.4 (au cas où déjà ON, on reset proprement)
-				if AutoHarv24.enabled then AutoHarv24:stop("FarmAuto cycle (reset)") end
-				AutoHarv24:start()
-				local t0 = os.clock()
-				for i=1,5 do if not self.enabled then break end; task.wait(1) end
-				AutoHarv24:stop("FarmAuto cycle (5s)")
-				if not self.enabled then break end
-				submitHalloweenToJackOLantern()
-				-- Attendre jusqu'à boucler toutes les 30s
-				local elapsed = os.clock() - t0
-				local waitLeft = math.max(0, 30 - elapsed)
-				local step = 0
-				while self.enabled and step < waitLeft do
-					task.wait(1); step += 1
-				end
-			end
-		end
-	end)
-end
-function FarmAuto:stop()
-	if not self.enabled then return end
-	self.enabled = false
-	if self.btn then
-		self.btn.BackgroundColor3 = Color3.fromRGB(200,120,80)
-		self.btn.Text = "🚜 FARM AUTO: OFF"
-	end
-	if AutoHarv24.enabled then AutoHarv24:stop("FarmAuto OFF") end
-	msg("🚜 FARM AUTO désactivé.", Color3.fromRGB(230,200,180))
-end
-function FarmAuto:toggle() if self.enabled then self:stop() else self:start() end end
 
 -- =========================================================
 -- ===================== MINI PANEL UI =====================
@@ -1557,8 +1311,9 @@ local function buildMiniPanel()
 	gui.Parent = playerGui
 
 	local frame = Instance.new("Frame")
-	-- ↑ augmenté pour Creepy + Farm Auto
-	frame.Size = UDim2.fromOffset(380, 560)
+	local MINI_FULL   = UDim2.fromOffset(400, 540)
+	local MINI_COLLAP = UDim2.fromOffset(400, 36)
+	frame.Size = MINI_FULL
 	frame.Position = UDim2.fromScale(0.02, 0.22)
 	frame.BackgroundColor3 = Color3.fromRGB(30,30,38)
 	frame.BorderSizePixel = 0
@@ -1572,10 +1327,10 @@ local function buildMiniPanel()
 	rounded(header, 10)
 
 	local title = Instance.new("TextLabel")
-	title.Size = UDim2.new(1, -46, 1, 0)
+	title.Size = UDim2.new(1, -78, 1, 0)
 	title.Position = UDim2.new(0, 10, 0, 0)
 	title.BackgroundTransparency = 1
-	title.Text = "⚙️ Saad Mini Panel — v3.4"
+	title.Text = "⚙️ Saad Mini Panel — v3.5"
 	title.TextColor3 = Color3.fromRGB(255,255,255)
 	title.Font = Enum.Font.GothamBold
 	title.TextSize = 14
@@ -1594,13 +1349,38 @@ local function buildMiniPanel()
 	rounded(closeBtn, 6)
 	closeBtn.MouseButton1Click:Connect(function() gui.Enabled=false end)
 
+	local minBtn = Instance.new("TextButton")
+	minBtn.Size = UDim2.fromOffset(26, 26)
+	minBtn.Position = UDim2.new(1, -62, 0.5, -13)
+	minBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 120)
+	minBtn.TextColor3 = Color3.fromRGB(255,255,255)
+	minBtn.Text = "▭"
+	minBtn.Font = Enum.Font.GothamBold
+	minBtn.TextSize = 14
+	minBtn.Parent = header
+	rounded(minBtn, 6)
+
 	local container = Instance.new("Frame")
 	container.Size = UDim2.new(1, -14, 1, -46)
 	container.Position = UDim2.new(0, 7, 0, 42)
 	container.BackgroundTransparency = 1
 	container.Parent = frame
 
-	-- Row 1 : AutoHarvest v5.5 + Submit Cauldron
+	makeDraggable(frame, header)
+
+	local miniCollapsed = false
+	local function toggleMini()
+		miniCollapsed = not miniCollapsed
+		if miniCollapsed then
+			container.Visible = false
+			TweenService:Create(frame, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = MINI_COLLAP}):Play()
+		else
+			TweenService:Create(frame, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = MINI_FULL}):Play()
+			task.delay(0.2, function() container.Visible = true end)
+		end
+	end
+	minBtn.MouseButton1Click:Connect(toggleMini)
+
 	local row1 = Instance.new("Frame"); row1.Size = UDim2.new(1, 0, 0, 40); row1.BackgroundTransparency = 1; row1.Parent = container
 	local btnAutoV5 = Instance.new("TextButton")
 	btnAutoV5.Size = UDim2.new(0.48, -4, 1, 0); btnAutoV5.Position = UDim2.new(0, 0, 0, 0)
@@ -1612,7 +1392,6 @@ local function buildMiniPanel()
 	btnSubmit.BackgroundColor3 = Color3.fromRGB(140, 110, 200); btnSubmit.TextColor3 = Color3.fromRGB(255,255,255)
 	btnSubmit.Text = "🧪 Submit All (Cauldron)"; btnSubmit.Font = Enum.Font.GothamBold; btnSubmit.TextSize = 13; btnSubmit.Parent = row1; rounded(btnSubmit, 8)
 
-	-- Row 2 : EVENT SEEDS (Spooky)
 	local titleSeeds = Instance.new("TextLabel")
 	titleSeeds.Size = UDim2.new(1, 0, 0, 20); titleSeeds.Position = UDim2.new(0, 0, 0, 46)
 	titleSeeds.BackgroundTransparency = 1; titleSeeds.TextXAlignment = Enum.TextXAlignment.Left
@@ -1637,7 +1416,16 @@ local function buildMiniPanel()
 		rounded(b, 8)
 		b.MouseButton1Click:Connect(function()
 			b.AutoButtonColor=false; b.BackgroundColor3=Color3.fromRGB(120, 75, 130)
-			task.spawn(function() buyEventShop(name, "Spooky Seeds") end)
+			task.spawn(function()
+				local r = safeWait({"GameEvents","BuyEventShopStock"},2) or safeWait({"GameEvents","FallMarketEvent","BuyEventShopStock"},2)
+				if not r or not r:IsA("RemoteEvent") then
+					msg("Remote BuyEventShopStock introuvable.", Color3.fromRGB(255,120,120))
+				else
+					local ok, err = pcall(function() r:FireServer(name, "Spooky Seeds") end)
+					if ok then msg("Achat Event Seed: "..name, Color3.fromRGB(180,230,180))
+					else msg("Échec Event Seed ("..name.."): "..tostring(err), Color3.fromRGB(255,160,140)) end
+				end
+			end)
 			task.delay(0.25, function() b.AutoButtonColor=true; b.BackgroundColor3=Color3.fromRGB(150, 95, 160) end)
 		end)
 	end
@@ -1649,60 +1437,7 @@ local function buildMiniPanel()
 		if col==0 then row = row + 1 end
 	end
 
-	-- Row 3 : EVENT SHOP (Creepy Critters)
-	local titleCrit = Instance.new("TextLabel")
-	titleCrit.Size = UDim2.new(1, 0, 0, 20); titleCrit.Position = UDim2.new(0, 0, 0, 204)
-	titleCrit.BackgroundTransparency = 1; titleCrit.TextXAlignment = Enum.TextXAlignment.Left
-	titleCrit.Text = "🧟 EVENT SHOP (Creepy Critters)"
-	titleCrit.TextColor3 = Color3.fromRGB(255,210,190)
-	titleCrit.Font = Enum.Font.GothamBold; titleCrit.TextSize = 13; titleCrit.Parent = container
-
-	local gridCrit = Instance.new("Frame")
-	gridCrit.Size = UDim2.new(1, 0, 0, 102); gridCrit.Position = UDim2.new(0, 0, 0, 226)
-	gridCrit.BackgroundTransparency = 1; gridCrit.Parent = container
-
-	local function mkEventBtn(xScale, yOff, name)
-		local b = Instance.new("TextButton")
-		b.Size = UDim2.new(0.48, -4, 0, 30)
-		b.Position = UDim2.new(xScale, xScale==0 and 0 or 4, 0, yOff)
-		b.BackgroundColor3 = Color3.fromRGB(170, 110, 120)
-		b.TextColor3 = Color3.fromRGB(255,255,255)
-		b.Text = "🛒 "..name
-		b.Font = Enum.Font.GothamBold
-		b.TextSize = 12
-		b.Parent = gridCrit
-		rounded(b, 8)
-		b.MouseButton1Click:Connect(function()
-			b.AutoButtonColor=false; b.BackgroundColor3=Color3.fromRGB(145, 90, 100)
-			task.spawn(function() buyEventShop(name, "Creepy Critters") end)
-			task.delay(0.25, function() b.AutoButtonColor=true; b.BackgroundColor3=Color3.fromRGB(170, 110, 120) end)
-		end)
-	end
-
-	local CREEPY_ITEMS = { "Wolf","Spooky Egg","Reaper","Ghost Bear","Pumpkin Rat" }
-	col, row = 0, 0
-	for _, name in ipairs(CREEPY_ITEMS) do
-		mkEventBtn(col==0 and 0 or 0.52, row*34, name)
-		col = (col==0) and 1 or 0
-		if col==0 then row = row + 1 end
-	end
-
-	-- Row 4 : 🎯 FARM AUTO (nouveau)
-	local rowFarm = Instance.new("Frame"); rowFarm.Size = UDim2.new(1, 0, 0, 40); rowFarm.Position = UDim2.new(0, 0, 0, 334); rowFarm.BackgroundTransparency = 1; rowFarm.Parent = container
-	local farmBtn = Instance.new("TextButton")
-	farmBtn.Size = UDim2.new(1, 0, 1, 0)
-	farmBtn.BackgroundColor3 = Color3.fromRGB(200, 120, 80)
-	farmBtn.TextColor3 = Color3.fromRGB(255,255,255)
-	farmBtn.Text = "🚜 FARM AUTO: OFF"
-	farmBtn.Font = Enum.Font.GothamBold
-	farmBtn.TextSize = 13
-	farmBtn.Parent = rowFarm
-	rounded(farmBtn, 8)
-	FarmAuto.btn = farmBtn
-	farmBtn.MouseButton1Click:Connect(function() FarmAuto:toggle() end)
-
-	-- Row 5 : 🎃 Submit Jack O Lantern
-	local rowJack = Instance.new("Frame"); rowJack.Size = UDim2.new(1, 0, 0, 40); rowJack.Position = UDim2.new(0, 0, 0, 378); rowJack.BackgroundTransparency = 1; rowJack.Parent = container
+	local rowJack = Instance.new("Frame"); rowJack.Size = UDim2.new(1, 0, 0, 40); rowJack.Position = UDim2.new(0, 0, 0, 206); rowJack.BackgroundTransparency = 1; rowJack.Parent = container
 	local jackBtn = Instance.new("TextButton")
 	jackBtn.Size = UDim2.new(1, 0, 1, 0)
 	jackBtn.BackgroundColor3 = Color3.fromRGB(200, 100, 80)
@@ -1718,8 +1453,61 @@ local function buildMiniPanel()
 		task.delay(0.25, function() jackBtn.AutoButtonColor=true; jackBtn.BackgroundColor3=Color3.fromRGB(200, 100, 80) end)
 	end)
 
-	-- Row 6 : Toggle v2.4 + Hint
-	local row4 = Instance.new("Frame"); row4.Size = UDim2.new(1, 0, 0, 70); row4.Position = UDim2.new(0, 0, 0, 422); row4.BackgroundTransparency = 1; row4.Parent = container
+	local petsTitle = Instance.new("TextLabel")
+	petsTitle.Size = UDim2.new(1, 0, 0, 20)
+	petsTitle.Position = UDim2.new(0, 0, 0, 250)
+	petsTitle.BackgroundTransparency = 1
+	petsTitle.TextXAlignment = Enum.TextXAlignment.Left
+	petsTitle.Text = "🎃 EVENT PETS / EGGS"
+	petsTitle.TextColor3 = Color3.fromRGB(255,235,180)
+	petsTitle.Font = Enum.Font.GothamBold
+	petsTitle.TextSize = 13
+	petsTitle.Parent = container
+
+	local petsGrid = Instance.new("Frame")
+	petsGrid.Size = UDim2.new(1, 0, 0, 100)
+	petsGrid.Position = UDim2.new(0, 0, 0, 272)
+	petsGrid.BackgroundTransparency = 1
+	petsGrid.Parent = container
+
+	local function mkPetBtn(xScale, yOff, label, tabHint)
+		local b = Instance.new("TextButton")
+		b.Size = UDim2.new(0.48, -4, 0, 30)
+		b.Position = UDim2.new(xScale, xScale==0 and 0 or 4, 0, yOff)
+		b.BackgroundColor3 = Color3.fromRGB(95, 140, 200)
+		b.TextColor3 = Color3.fromRGB(255,255,255)
+		b.Text = "🛒 "..label
+		b.Font = Enum.Font.GothamBold
+		b.TextSize = 12
+		b.Parent = petsGrid
+		rounded(b, 8)
+		b.MouseButton1Click:Connect(function()
+			b.AutoButtonColor=false; b.BackgroundColor3=Color3.fromRGB(75, 110, 160)
+			task.spawn(function()
+				local r = safeWait({"GameEvents","BuyEventShopStock"},2) or safeWait({"GameEvents","FallMarketEvent","BuyEventShopStock"},2)
+				if not r or not r:IsA("RemoteEvent") then
+					msg("Remote BuyEventShopStock introuvable.", Color3.fromRGB(255,120,120))
+				else
+					local tabs = {tabHint or "Spooky Pets","Spooky Eggs","Spooky Shop","Spooky","Halloween Shop","Event Shop"}
+					local okAny=false
+					for _,t in ipairs(tabs) do
+						local ok=pcall(function() r:FireServer(label, t) end)
+						if ok then okAny=true; msg("🛍️ Achat: "..label.." ("..t..")", Color3.fromRGB(180,230,180)); break end
+					end
+					if not okAny then pcall(function() r:FireServer(label) end) end
+				end
+			end)
+			task.delay(0.25, function() b.AutoButtonColor=true; b.BackgroundColor3=Color3.fromRGB(95, 140, 200) end)
+		end)
+	end
+
+	mkPetBtn(0.00, 0,  "Wolf",        "Spooky Pets")
+	mkPetBtn(0.52, 0,  "Spooky Egg",  "Spooky Eggs")
+	mkPetBtn(0.00, 34, "Reaper",      "Spooky Pets")
+	mkPetBtn(0.52, 34, "Ghost Bear",  "Spooky Pets")
+	mkPetBtn(0.00, 68, "Pumpkin Rat", "Spooky Pets")
+
+	local row4 = Instance.new("Frame"); row4.Size = UDim2.new(1, 0, 0, 70); row4.Position = UDim2.new(0, 0, 0, 380); row4.BackgroundTransparency = 1; row4.Parent = container
 	local btnAutoV24 = Instance.new("TextButton")
 	btnAutoV24.Size = UDim2.new(1, 0, 0, 32)
 	btnAutoV24.BackgroundColor3 = Color3.fromRGB(200,120,60)
@@ -1740,7 +1528,41 @@ local function buildMiniPanel()
 	hint.TextSize = 12
 	hint.Parent = row4
 
-	-- Binds
+	local rowAuto = Instance.new("Frame"); rowAuto.Size = UDim2.new(1, 0, 0, 40); rowAuto.Position = UDim2.new(0, 0, 0, 452); rowAuto.BackgroundTransparency = 1; rowAuto.Parent = container
+	local farmAutoBtn = Instance.new("TextButton")
+	farmAutoBtn.Size = UDim2.new(1, 0, 1, 0)
+	farmAutoBtn.BackgroundColor3 = Color3.fromRGB(90, 160, 90)
+	farmAutoBtn.TextColor3 = Color3.fromRGB(255,255,255)
+	farmAutoBtn.Text = "🌀 FARM AUTO: OFF"
+	farmAutoBtn.Font = Enum.Font.GothamBold
+	farmAutoBtn.TextSize = 13
+	farmAutoBtn.Parent = rowAuto
+	rounded(farmAutoBtn, 8)
+
+	local farmAutoEnabled = false
+	local function setFarmAuto(on)
+		if farmAutoEnabled == on then return end
+		farmAutoEnabled = on
+		farmAutoBtn.Text = on and "🌀 FARM AUTO: ON" or "🌀 FARM AUTO: OFF"
+		farmAutoBtn.BackgroundColor3 = on and Color3.fromRGB(80,180,100) or Color3.fromRGB(90,160,90)
+		if on then
+			msg("🌀 FARM AUTO ON • Harvest 10s → Submit All → wait 30s → loop.", Color3.fromRGB(180,230,180))
+			task.spawn(function()
+				while farmAutoEnabled do
+					AutoHarv24:start()
+					task.wait(10)
+					AutoHarv24:stop("FARM AUTO")
+					submitAllCauldron_Exact()
+					for i=1,30 do if not farmAutoEnabled then break end task.wait(1) end
+				end
+				msg("🌀 FARM AUTO OFF.", Color3.fromRGB(230,200,180))
+			end)
+		else
+			AutoHarv24:stop("FARM AUTO OFF")
+		end
+	end
+	farmAutoBtn.MouseButton1Click:Connect(function() setFarmAuto(not farmAutoEnabled) end)
+
 	btnAutoV5.MouseButton1Click:Connect(function()
 		if AutoHarv5.isEnabled() then
 			AutoHarv5.stop()
@@ -1753,24 +1575,20 @@ local function buildMiniPanel()
 		end
 	end)
 	btnSubmit.MouseButton1Click:Connect(function()
-		local r = getWitchesSubmitRemote()
-		if not r then msg("WitchesBrew.SubmitItemToCauldron introuvable.", Color3.fromRGB(255,120,120)); return end
-		local ok, res = pcall(function() return r:InvokeServer("All") end)
-		if ok then msg("🧪 Cauldron: Submit All OK.", Color3.fromRGB(180,230,200))
-		else msg("Cauldron error: "..tostring(res), Color3.fromRGB(255,160,140)) end
+		submitAllCauldron_Exact()
 	end)
-	btnAutoV24.MouseButton1Click:Connect(function() if AutoHarv24.enabled then AutoHarv24:stop() else AutoHarv24:start() end end)
+	btnAutoV24.MouseButton1Click:Connect(function()
+		if AutoHarv24.enabled then AutoHarv24:stop() else AutoHarv24:start() end
+	end)
 
-	makeDraggable(frame, header)
-	applyAutoScale(gui, {frame})
+	applyAutoScale(gui)
 	miniPanelGui = gui
 	return gui
 end
 
+openV5Btn.MouseButton1Click:Connect(function() AutoHarv5.openUI() end)
+openMiniBtn.MouseButton1Click:Connect(function() local g = buildMiniPanel(); g.Enabled = not g.Enabled end)
 
--- =========================================================
--- ===================== HOTKEYS ===========================
--- =========================================================
 UserInputService.InputBegan:Connect(function(input, gp)
 	if gp then return end
 	if input.KeyCode == Enum.KeyCode.H then
@@ -1780,26 +1598,7 @@ UserInputService.InputBegan:Connect(function(input, gp)
 	end
 end)
 
--- Open buttons bindings
-if openMiniBtn then
-	openMiniBtn.MouseButton1Click:Connect(function()
-		local g = buildMiniPanel()
-		g.Enabled = true  -- ouvre (au lieu de toggle, plus clair)
-	end)
-else
-	msg("⚠️ Bouton 'Open Saad Mini Panel' introuvable.", Color3.fromRGB(255,180,120))
-end
-
-if openV5Btn then
-	openV5Btn.MouseButton1Click:Connect(function()
-		AutoHarv5.openUI()
-	end)
-else
-	msg("⚠️ Bouton 'Open Harvest v5 Panel' introuvable.", Color3.fromRGB(255,180,120))
-end
-
-
--- Ready
-applyAutoScale(screenGui, {mainFrame})
-applyAutoScale(gearGui,   {gearFrame})
-msg("✅ Saad Helper Pack chargé • Auto-buy Seeds/Gear/Eggs: ON (60s) • ⌘/Ctrl+clic TP • Mini Panel v3.4 • H=v2.4 (auto-stop 3s) • J=v5.5 • 🎃 Jack Submit • 🧟 Event Shop (Spooky+Creepy) • 🚜 Farm Auto prêt.", Color3.fromRGB(170,230,255))
+gearGui = gearGui or Instance.new("ScreenGui")
+applyAutoScale(screenGui)
+applyAutoScale(gearGui)
+msg("✅ Saad Helper Pack chargé • Auto-buy Seeds/Gear/Eggs: ON (60s) • ⌘/Ctrl+clic TP • Mini Panel v3.5 (réduction ▭) • H=v2.4 • J=v5.5 (Halloween toggle).", Color3.fromRGB(170,230,255))
