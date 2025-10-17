@@ -5,14 +5,13 @@
 -- - Gear Panel: Sell, Submit Cauldron, Buy All Seeds/Gear/Eggs + Auto/60s ON
 -- - Seeds inclut "Great Pumpkin" — auto-buy actif (BuySeedStock "Shop", <Seed>)
 -- - Bouton: Buy "Level Up Lollipop" x50 (essaie 2 noms possibles)
--- - Mini Panel v3.6 (✕ fermer / ▭ réduire) :
+-- - Mini Panel v3.8 (✕ fermer / ▭ réduire) :
 --     • 🌾 Auto-Harvest v5.5 — SCAN rayon, turbo, stop à 200 ✔ (+ Halloween ONLY)
---     • Auto Harvest v2.4 (scan périodique) -> STOP auto 3s & backpack plein
---     • Submit All (Cauldron) • Event Seeds (Spooky)
+--     • 🌾 Auto Harvest v2.4 — durée réglable (1–6s), backpack stop, OFF immédiat
+--     • 🧪 Submit All (Cauldron) — robuste (RemoteFunction exact + fallback)
 --     • 🎃 Submit Halloween → Jack
 --     • 🧟 Event Pets/Eggs (Wolf, Spooky Egg, Reaper, Ghost Bear, Pumpkin Rat)
---     • 🌀 FARM AUTO (Harvest [slider] → Submit All → wait [slider] → loop)
---     • Sliders: Harvest Duration & Wait After Submit
+--     • 🌀 FARM AUTO (Submit → Harvest [1–5s] → Submit → Wait [3–50s] → loop)
 -- - Raccourcis: H = toggle Auto Harvest v2.4 • J = toggle Auto Harvest v5.5
 -- - ▶️ Player Tuner: bouton "🌾 Open Harvest v5 Panel"
 -- - Tous les panels sont LIBREMENT déplaçables (mobile/PC), sans verrou.
@@ -79,11 +78,16 @@ local screenGui, gearGui
 local gearFrame
 local coordsLabel
 
--- ========= FARM AUTO settings (sliders) =========
-local farmHarvestSeconds = 10   -- durée de récolte (s)
-local farmWaitSeconds    = 30   -- attente après submit (s)
+-- ========= FARM AUTO settings =========
+-- Ordre: Submit → Harvest (1–5s) → Submit → Wait (3–50s)
+local farmHarvestSeconds = 3    -- slider 1..5
+local farmWaitSeconds    = 10   -- slider 3..50
 local farmAutoEnabled    = false
-local farmAutoToken      = 0    -- annulation
+local farmAutoToken      = 0
+local farmAutoThread     = nil
+
+-- ========= Auto Harvest v2.4 duration (slider 1..6s) =========
+local harv24DurationSeconds = 3
 
 -- =========================================================
 -- ====================== Utils / Logs =====================
@@ -168,15 +172,42 @@ local function getBuyGearRemote()        local r=safeWait({"GameEvents","BuyGear
 local function getBuyPetEggRemote()      local r=safeWait({"GameEvents","BuyPetEgg"},2)                     return (r and r:IsA("RemoteEvent")) and r or nil end
 local function getWitchesSubmitRemote()  local r=safeWait({"GameEvents","WitchesBrew","SubmitItemToCauldron"},2) return (r and r:IsA("RemoteFunction")) and r or nil end
 
--- === Submit All (exactement comme demandé) ===
-local function submitAllCauldron_Exact()
-	local ok, err = pcall(function()
-		local args = { [1] = "All" }
-		local rf = ReplicatedStorage:WaitForChild("GameEvents"):WaitForChild("WitchesBrew"):WaitForChild("SubmitItemToCauldron")
-		rf:InvokeServer(unpack(args))
-	end)
-	if ok then msg("🧪 Cauldron: Submit All OK (Exact).", Color3.fromRGB(180,230,200)) else msg("Cauldron error (Exact): "..tostring(err), Color3.fromRGB(255,160,140)) end
-	return ok
+-- === Submit All (robuste) — respecte l'appel exact fourni ===
+local function submitAllCauldron_Robust()
+	-- Essai 1: chemin EXACT fourni
+	for attempt = 1, 2 do
+		local ok, _ = pcall(function()
+			local args = { [1] = "All" }
+			local rf = ReplicatedStorage
+				:WaitForChild("GameEvents", 2)
+				:WaitForChild("WitchesBrew", 2)
+				:WaitForChild("SubmitItemToCauldron", 2)
+			rf:InvokeServer(unpack(args))
+		end)
+		if ok then
+			msg("🧪 Cauldron: Submit All OK (Exact).", Color3.fromRGB(180,230,200))
+			return true
+		else
+			if attempt == 2 then
+				-- Essai 2: fallback via helper
+				local rf = getWitchesSubmitRemote()
+				if rf then
+					local ok2, err2 = pcall(function() rf:InvokeServer("All") end)
+					if ok2 then
+						msg("🧪 Cauldron: Submit All OK (Fallback).", Color3.fromRGB(180,230,200))
+						return true
+					else
+						msg("Cauldron error: "..tostring(err2), Color3.fromRGB(255,160,140))
+					end
+				else
+					msg("❌ WitchesBrew.SubmitItemToCauldron introuvable.", Color3.fromRGB(255,120,120))
+				end
+			else
+				task.wait(0.15)
+			end
+		end
+	end
+	return false
 end
 
 -- =========================================================
@@ -189,7 +220,7 @@ local CAP_NAMES   = { "capacity","cap","max","maxcapacity","maxamount","limit","
 local function nameMatchAny(nm, list) nm = lower(nm) for _, k in ipairs(list) do if nm == k or string.find(nm, k, 1, true) then return true end end return false end
 local function tryAutoBindBackpack()
 	BackpackCountValue, BackpackCapValue = nil, nil
-	local roots = { player, player:FindFirstChild("PlayerGui"), player:FindChild("PlayerScripts"), ReplicatedStorage, Workspace }
+	local roots = { player, player:FindFirstChild("PlayerGui"), player:FindFirstChild("PlayerScripts"), ReplicatedStorage, Workspace }
 	local bestParent, bestScore = nil, -1
 	local candidateMap = {}
 	for _, root in ipairs(roots) do
@@ -255,7 +286,7 @@ local function BindMetaCtrlClickTeleport(opts)
 		local d = (pos - hrp.Position).Magnitude
 		local t = math.max(d / tpSpeed, 0.05)
 		TweenService:Create(hrp, TweenInfo.new(t, Enum.EasingStyle.Linear), {CFrame = CFrame.new(pos)}):Play()
-	 end
+	end
 	local function metaOrCtrlDown()
 		return UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
 			or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
@@ -437,6 +468,7 @@ screenGui.Name = "PlayerTuner"
 screenGui.ResetOnSpawn = false
 screenGui.IgnoreGuiInset = false
 screenGui.Parent = playerGui
+applyAutoScale(screenGui)
 
 local mainFrame = Instance.new("Frame")
 mainFrame.Size = UDim2.fromOffset(320, 392)
@@ -642,8 +674,6 @@ local function resetAll()
 end
 resetBtn.MouseButton1Click:Connect(resetAll)
 
-local isNoclipping = false
-local noclipConnection = nil
 noclipBtn.MouseButton1Click:Connect(function()
 	isNoclipping = not isNoclipping
 	if isNoclipping then
@@ -675,6 +705,7 @@ gearGui.Name = "GearPanel"
 gearGui.ResetOnSpawn = false
 gearGui.IgnoreGuiInset = false
 gearGui.Parent = playerGui
+applyAutoScale(gearGui)
 
 gearFrame = Instance.new("Frame")
 local GEAR_FULL   = UDim2.fromOffset(280, 520)
@@ -934,10 +965,7 @@ sellBtn.MouseButton1Click:Connect(function()
 	msg("🧺 Inventaire vendu (TP/retour).", Color3.fromRGB(220,200,140))
 end)
 submitCauldronBtn.MouseButton1Click:Connect(function()
-	local r = getWitchesSubmitRemote()
-	if not r then msg("❌ WitchesBrew.SubmitItemToCauldron introuvable.", Color3.fromRGB(255,120,120)); return end
-	local ok, res = pcall(function() return r:InvokeServer("All") end)
-	if ok then msg("🧪 Cauldron: Submit All OK.", Color3.fromRGB(180,230,200)) else msg("Cauldron error: "..tostring(res), Color3.fromRGB(255,160,140)) end
+	submitAllCauldron_Robust()
 end)
 buyAllSeedsButton.MouseButton1Click:Connect(function() buyAllSeedsWorker(); seedsTimer = AUTO_PERIOD; updateTimerLabels() end)
 buyAllGearButton.MouseButton1Click:Connect(function() buyAllGearWorker();  gearTimer  = AUTO_PERIOD; updateTimerLabels() end)
@@ -973,7 +1001,6 @@ local HAS_FIRE_PROX = (typeof(_FPP) == "function")
 
 local PromptHeur = {
 	plantWhitelist = { "plant","harvest","crop","fruit","vegetable","tree","bush","flower","pick","collect","gather","récolte","récolter","cueillir" },
-	plantExclude   = { },
 	promptTextWhitelist = { "harvest","pick","collect","gather","récolter","cueillir" },
 	promptBlacklist = { "fence","save","slot","skin","shop","buy","sell","chest","settings","rename","open","claim","craft","upgrade" },
 }
@@ -982,7 +1009,6 @@ local function isPlantPrompt(prompt)
 	if not prompt or not prompt.Parent then return false end
 	local action = lower(prompt.ActionText)
 	local object = lower(prompt.ObjectText)
-	if containsAny(action, PromptHeur.plantExclude) or containsAny(object, PromptHeur.plantExclude) then return false end
 	for _, kw in ipairs(PromptHeur.promptTextWhitelist) do
 		if string.find(action, kw, 1, true) or string.find(object, kw, 1, true) then
 			local node = prompt.Parent
@@ -1065,9 +1091,9 @@ local function safeFirePrompt(prompt, holdCap)
 	VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
 end
 
--- === Routine de harvest fiable pour FARM AUTO avec annulation ===
+-- === Routine de harvest pour FARM AUTO (annulable) ===
 local function performTimedHarvest(seconds, radius, holdCap, token)
-	local dur = math.max(1, tonumber(seconds) or 10)
+	local dur = math.clamp(math.floor(tonumber(seconds) or 3), 1, 5) -- borne 1..5 (FARM AUTO)
 	local r   = math.max(10, tonumber(radius)  or 26)
 	local hc  = tonumber(holdCap) or 0.25
 	local stopAt = os.clock() + dur
@@ -1096,30 +1122,37 @@ local AutoHarv24 = {
 function AutoHarv24:start()
 	if self.enabled then return end
 	self.enabled = true
+	local runSecs = math.clamp(math.floor(harv24DurationSeconds or 3), 1, 6)
 	if self.uiBtn and self.uiBtn.Parent then
 		self.uiBtn.BackgroundColor3=Color3.fromRGB(100,180,80)
-		self.uiBtn.Text=("🌾 Auto Harvest v2.4: ON  • r=%d"):format(self.config.radius)
+		self.uiBtn.Text=("🌾 Auto Harvest v2.4: ON  • r=%d • %ds"):format(self.config.radius, runSecs)
 	end
-	msg("🌾 AutoHarvest v2.4 ON — stop à backpack plein + arrêt auto 3s.", Color3.fromRGB(180,230,180))
-	local startedAt = tick()
-	task.delay(3, function() if self.enabled and (tick() - startedAt) >= 2.9 then self:stop("arrêt auto 3s") end end)
+	msg("🌾 AutoHarvest v2.4 ON.", Color3.fromRGB(180,230,180))
 
+	-- Boucle limitée par le slider (1–6s) + conditions d’arrêt
+	local stopAt = os.clock() + runSecs
 	task.spawn(function()
 		while self.enabled do
+			-- arrêt durée
+			if os.clock() >= stopAt then
+				self:stop("durée atteinte")
+				break
+			end
+			-- arrêt backpack plein (option)
 			if self.config.stopWhenBackpackFull then
 				local full, c, m = isBackpackFull()
 				if full then
-					self.enabled = false
-					if self.uiBtn and self.uiBtn.Parent then
-						self.uiBtn.BackgroundColor3=Color3.fromRGB(200,120,60)
-						self.uiBtn.Text="🌾 Auto Harvest v2.4: OFF"
-					end
-					msg(("⚠️ MAX BACKPACK SPACE (%s/%s) — AutoHarvest v2.4 OFF"):format(tostring(c or "?"), tostring(m or "?")), Color3.fromRGB(255,180,120))
+					self:stop(("MAX BACKPACK SPACE (%s/%s)"):format(tostring(c or "?"), tostring(m or "?")))
 					break
 				end
 			end
-			local prompts = getNearbyPlantPrompts(self.config.radius)
-			for _, prompt in ipairs(prompts) do safeFirePrompt(prompt, self.config.holdCap) end
+			-- récolte proche
+			local prompts = getNearbyPlantPrompts(self.config.radius, true)
+			for _, prompt in ipairs(prompts) do
+				if not self.enabled then break end
+				safeFirePrompt(prompt, self.config.holdCap)
+			end
+			-- spam E optionnel
 			if self.config.spamE then
 				VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game); task.wait(0.03)
 				VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
@@ -1135,8 +1168,11 @@ function AutoHarv24:stop(reason)
 		self.uiBtn.BackgroundColor3=Color3.fromRGB(200,120,60)
 		self.uiBtn.Text="🌾 Auto Harvest v2.4: OFF"
 	end
-	if reason then msg("🌾 AutoHarvest v2.4 OFF — "..tostring(reason)..".", Color3.fromRGB(230,200,180))
-	else msg("🌾 AutoHarvest v2.4 OFF.", Color3.fromRGB(230,200,180)) end
+	if reason and reason ~= "" then
+		msg("🌾 AutoHarvest v2.4 OFF — "..tostring(reason)..".", Color3.fromRGB(230,200,180))
+	else
+		msg("🌾 AutoHarvest v2.4 OFF.", Color3.fromRGB(230,200,180))
+	end
 end
 
 -- =========================================================
@@ -1294,17 +1330,14 @@ do
 	end
 
 	function AutoHarv5.isEnabled() return STATE.enabled end
-	function AutoHarv5.toggle()
-		if STATE.enabled then STATE.enabled=false; msg("🌾 AutoHarvest v5.5 OFF.", Color3.fromRGB(230,200,180))
-		else STATE.runCount = 0; STATE.enabled=true; task.spawn(mainLoop) end
-	end
-	function AutoHarv5.start() if not STATE.enabled then AutoHarv5.toggle() end end
-	function AutoHarv5.stop()  if STATE.enabled then AutoHarv5.toggle()  end end
+	function AutoHarv5.start() if not STATE.enabled then STATE.enabled=true; STATE.runCount=0; task.spawn(mainLoop) end end
+	function AutoHarv5.stop()  if STATE.enabled then STATE.enabled=false end end
 
-	-- ========= UI DÉDIÉE v5.5 (avec toggle Halloween) =========
+	-- ========= UI DÉDIÉE v5.5 (with Halloween toggle) =========
 	local function buildUI()
 		if STATE.ui and STATE.ui.Parent then STATE.ui.Enabled = true; return STATE.ui end
 		local gui = Instance.new("ScreenGui"); gui.Name = "Saad_AutoHarvest_v55"; gui.IgnoreGuiInset = true; gui.ResetOnSpawn = false; gui.Parent = playerGui
+		applyAutoScale(gui)
 
 		local frame = Instance.new("Frame"); frame.Size = UDim2.new(0, 348, 0, 246); frame.Position = UDim2.new(0, 20, 0, 80); frame.BackgroundColor3 = Color3.fromRGB(22,22,26); frame.BorderSizePixel = 0; frame.Parent = gui
 		Instance.new("UICorner", frame).CornerRadius = UDim.new(0,12)
@@ -1329,8 +1362,8 @@ do
 
 		local y = 40
 		toggleRow(y, "Activer Auto-Harvest", false, function(on) if on then AutoHarv5.start() else AutoHarv5.stop() end end); y = y + 32
-		toggleRow(y, "Mode Turbo (cadence ++)", true, function(on) end); y = y + 32
-		toggleRow(y, "Harvest Halloween ONLY", false, function(on) end); y = y + 32
+		toggleRow(y, "Mode Turbo (cadence ++)", true, function(on) STATE.turbo = on end); y = y + 32
+		toggleRow(y, "Harvest Halloween ONLY", false, function(on) STATE.halloweenOnly = on end); y = y + 32
 
 		STATE.ui = gui
 		return gui
@@ -1353,9 +1386,10 @@ local function buildMiniPanel()
 	gui.ResetOnSpawn = false
 	gui.IgnoreGuiInset = false
 	gui.Parent = playerGui
+	applyAutoScale(gui)
 
 	local frame = Instance.new("Frame")
-	local MINI_FULL   = UDim2.fromOffset(400, 600)
+	local MINI_FULL   = UDim2.fromOffset(400, 660)
 	local MINI_COLLAP = UDim2.fromOffset(400, 36)
 	frame.Size = MINI_FULL
 	frame.Position = UDim2.fromScale(0.02, 0.22)
@@ -1374,7 +1408,7 @@ local function buildMiniPanel()
 	title.Size = UDim2.new(1, -120, 1, 0)
 	title.Position = UDim2.new(0, 10, 0, 0)
 	title.BackgroundTransparency = 1
-	title.Text = "⚙️ Saad Mini Panel — v3.6"
+	title.Text = "⚙️ Saad Mini Panel — v3.8"
 	title.TextColor3 = Color3.fromRGB(255,255,255)
 	title.Font = Enum.Font.GothamBold
 	title.TextSize = 14
@@ -1425,6 +1459,7 @@ local function buildMiniPanel()
 	end
 	minBtn.MouseButton1Click:Connect(toggleMini)
 
+	-- Row 1 : AutoHarvest v5.5 + Submit Cauldron
 	local row1 = Instance.new("Frame"); row1.Size = UDim2.new(1, 0, 0, 40); row1.BackgroundTransparency = 1; row1.Parent = container
 	local btnAutoV5 = Instance.new("TextButton")
 	btnAutoV5.Size = UDim2.new(0.48, -4, 1, 0); btnAutoV5.Position = UDim2.new(0, 0, 0, 0)
@@ -1434,9 +1469,17 @@ local function buildMiniPanel()
 	local btnSubmit = Instance.new("TextButton")
 	btnSubmit.Size = UDim2.new(0.52, 0, 1, 0); btnSubmit.Position = UDim2.new(0.48, 4, 0, 0)
 	btnSubmit.BackgroundColor3 = Color3.fromRGB(140, 110, 200); btnSubmit.TextColor3 = Color3.fromRGB(255,255,255)
-	btnSubmit.Text = "🧪 Submit All (Cauldron)"; btnSubmit.Font = Enum.Font.GothamBold; btnSubmit.TextSize = 13; btnSubmit.Parent = row1; rounded(btnSubmit, 8)
+	btnSubmit.Text = "🧪 Submit All (Cauldron)"
+	btnSubmit.Font = Enum.Font.GothamBold
+	btnSubmit.TextSize = 13
+	btnSubmit.Parent = row1
+	rounded(btnSubmit, 8)
 
-	-- Title seeds
+	btnSubmit.MouseButton1Click:Connect(function()
+		submitAllCauldron_Robust()
+	end)
+
+	-- Row 2 : Event Seeds (Spooky)
 	local titleSeeds = Instance.new("TextLabel")
 	titleSeeds.Size = UDim2.new(1, 0, 0, 20); titleSeeds.Position = UDim2.new(0, 0, 0, 46)
 	titleSeeds.BackgroundTransparency = 1; titleSeeds.TextXAlignment = Enum.TextXAlignment.Left
@@ -1482,7 +1525,7 @@ local function buildMiniPanel()
 		if col==0 then row = row + 1 end
 	end
 
-	-- Submit Halloween → Jack
+	-- Row 3 : 🎃 Submit Jack O Lantern
 	local rowJack = Instance.new("Frame"); rowJack.Size = UDim2.new(1, 0, 0, 40); rowJack.Position = UDim2.new(0, 0, 0, 206); rowJack.BackgroundTransparency = 1; rowJack.Parent = container
 	local jackBtn = Instance.new("TextButton")
 	jackBtn.Size = UDim2.new(1, 0, 1, 0)
@@ -1499,13 +1542,13 @@ local function buildMiniPanel()
 		task.delay(0.25, function() jackBtn.AutoButtonColor=true; jackBtn.BackgroundColor3=Color3.fromRGB(200, 100, 80) end)
 	end)
 
-	-- PETS / EGGS
+	-- PETS / EGGS (exact "Creepy Critters")
 	local petsTitle = Instance.new("TextLabel")
 	petsTitle.Size = UDim2.new(1, 0, 0, 20)
 	petsTitle.Position = UDim2.new(0, 0, 0, 250)
 	petsTitle.BackgroundTransparency = 1
 	petsTitle.TextXAlignment = Enum.TextXAlignment.Left
-	petsTitle.Text = "🎃 EVENT PETS / EGGS"
+	petsTitle.Text = "🎃 EVENT PETS / EGGS — (Creepy Critters)"
 	petsTitle.TextColor3 = Color3.fromRGB(255,235,180)
 	petsTitle.Font = Enum.Font.GothamBold
 	petsTitle.TextSize = 13
@@ -1517,13 +1560,13 @@ local function buildMiniPanel()
 	petsGrid.BackgroundTransparency = 1
 	petsGrid.Parent = container
 
-	local function mkPetBtn(xScale, yOff, label, tabHint)
+	local function mkPetBtn(xScale, yOff, label)
 		local b = Instance.new("TextButton")
 		b.Size = UDim2.new(0.48, -4, 0, 30)
 		b.Position = UDim2.new(xScale, xScale==0 and 0 or 4, 0, yOff)
 		b.BackgroundColor3 = Color3.fromRGB(95, 140, 200)
 		b.TextColor3 = Color3.fromRGB(255,255,255)
-		b.Text = "🛒 "..label
+		b.Text = "🛒 "..label.." (Creepy Critters)"
 		b.Font = Enum.Font.GothamBold
 		b.TextSize = 12
 		b.Parent = petsGrid
@@ -1531,27 +1574,29 @@ local function buildMiniPanel()
 		b.MouseButton1Click:Connect(function()
 			b.AutoButtonColor=false; b.BackgroundColor3=Color3.fromRGB(75, 110, 160)
 			task.spawn(function()
-				local r = safeWait({"GameEvents","BuyEventShopStock"},2) or safeWait({"GameEvents","FallMarketEvent","BuyEventShopStock"},2)
+				local r = safeWait({"GameEvents","BuyEventShopStock"},2)
 				if not r or not r:IsA("RemoteEvent") then
 					msg("Remote BuyEventShopStock introuvable.", Color3.fromRGB(255,120,120))
 				else
-					local tabs = {tabHint or "Spooky Pets","Spooky Eggs","Spooky Shop","Spooky","Halloween Shop","Event Shop"}
 					local okAny=false
-					for _,t in ipairs(tabs) do
-						local ok=pcall(function() r:FireServer(label, t) end)
-						if ok then okAny=true; msg("🛍️ Achat: "..label.." ("..t..")", Color3.fromRGB(180,230,180)); break end
+					for i=1,4 do
+						local ok, _ = pcall(function()
+							r:FireServer(label, "Creepy Critters")
+						end)
+						if ok then okAny=true; msg("🛍️ Achat: "..label.." (Creepy Critters) ✓", Color3.fromRGB(180,230,180)); break
+						else task.wait(0.05) end
 					end
-					if not okAny then pcall(function() r:FireServer(label) end) end
+					if not okAny then msg("⚠️ Achat échec: "..label.." (Creepy Critters)", Color3.fromRGB(255,160,140)) end
 				end
 			end)
 			task.delay(0.25, function() b.AutoButtonColor=true; b.BackgroundColor3=Color3.fromRGB(95, 140, 200) end)
 		end)
 	end
-	mkPetBtn(0.00, 0,  "Wolf",        "Spooky Pets")
-	mkPetBtn(0.52, 0,  "Spooky Egg",  "Spooky Eggs")
-	mkPetBtn(0.00, 34, "Reaper",      "Spooky Pets")
-	mkPetBtn(0.52, 34, "Ghost Bear",  "Spooky Pets")
-	mkPetBtn(0.00, 68, "Pumpkin Rat", "Spooky Pets")
+	mkPetBtn(0.00, 0,  "Wolf")
+	mkPetBtn(0.52, 0,  "Spooky Egg")
+	mkPetBtn(0.00, 34, "Reaper")
+	mkPetBtn(0.52, 34, "Ghost Bear")
+	mkPetBtn(0.00, 68, "Pumpkin Rat")
 
 	-- Row Auto v2.4 + hint
 	local row4 = Instance.new("Frame"); row4.Size = UDim2.new(1, 0, 0, 70); row4.Position = UDim2.new(0, 0, 0, 380); row4.BackgroundTransparency = 1; row4.Parent = container
@@ -1564,6 +1609,8 @@ local function buildMiniPanel()
 	btnAutoV24.TextSize = 13
 	btnAutoV24.Parent = row4
 	rounded(btnAutoV24, 8)
+	AutoHarv24.uiBtn = btnAutoV24  -- 🔧 lie le bouton à v2.4 (pour le texte/couleur)
+
 	local hint = Instance.new("TextLabel")
 	hint.Size = UDim2.new(1, 0, 0, 26)
 	hint.Position = UDim2.new(0, 0, 0, 38)
@@ -1574,19 +1621,28 @@ local function buildMiniPanel()
 	hint.TextSize = 12
 	hint.Parent = row4
 
-	-- ===== Sliders FARM AUTO =====
-	local slidersRow = Instance.new("Frame"); slidersRow.Size = UDim2.new(1, 0, 0, 120); slidersRow.Position = UDim2.new(0, 0, 0, 450); slidersRow.BackgroundTransparency = 1; slidersRow.Parent = container
-	local harvestSlider = createSlider(slidersRow, 0,   "🌀 Harvest Duration (s)",  3, 60, 1, farmHarvestSeconds, function(v) farmHarvestSeconds = v end, 0)
-	local waitSlider    = createSlider(slidersRow, 60,  "⏳ Wait After Submit (s)", 5, 120,1, farmWaitSeconds,    function(v) farmWaitSeconds = v end, 0)
+	-- 🔧 Slider v2.4 (1–6s) — juste sous le bouton
+	local v24SliderRow = Instance.new("Frame"); v24SliderRow.Size = UDim2.new(1, 0, 0, 60); v24SliderRow.Position = UDim2.new(0, 0, 0, 420); v24SliderRow.BackgroundTransparency = 1; v24SliderRow.Parent = container
+	local v24Slider = createSlider(v24SliderRow, 0, "🌾 v2.4 Run Duration (1–6s)", 1, 6, 1, harv24DurationSeconds, function(v)
+		harv24DurationSeconds = v
+		if AutoHarv24.enabled and AutoHarv24.uiBtn and AutoHarv24.uiBtn.Parent then
+			AutoHarv24.uiBtn.Text=("🌾 Auto Harvest v2.4: ON  • r=%d • %ds"):format(AutoHarv24.config.radius, v)
+		end
+	end, 0)
 
-	-- ===== FARM AUTO Button =====
-	local rowAuto = Instance.new("Frame"); rowAuto.Size = UDim2.new(1, 0, 0, 40); rowAuto.Position = UDim2.new(0, 0, 0, 570); rowAuto.BackgroundTransparency = 1; rowAuto.Parent = container
+	-- ===== Sliders FARM AUTO =====
+	local slidersRow = Instance.new("Frame"); slidersRow.Size = UDim2.new(1, 0, 0, 120); slidersRow.Position = UDim2.new(0, 0, 0, 480); slidersRow.BackgroundTransparency = 1; slidersRow.Parent = container
+	local harvestSlider = createSlider(slidersRow, 0,   "🌀 Harvest Duration (1–5s)",  1, 5, 1, farmHarvestSeconds, function(v) farmHarvestSeconds = v end, 0)
+	local waitSlider    = createSlider(slidersRow, 60,  "⏳ Wait After Submit (3–50s)", 3, 50,1, farmWaitSeconds,    function(v) farmWaitSeconds = v end, 0)
+
+	-- ===== FARM AUTO Button (Submit → Harvest → Submit → Wait) =====
+	local rowAuto = Instance.new("Frame"); rowAuto.Size = UDim2.new(1, 0, 0, 40); rowAuto.Position = UDim2.new(0, 0, 0, 600); rowAuto.BackgroundTransparency = 1; rowAuto.Parent = container
 	local farmAutoBtn = Instance.new("TextButton")
 	farmAutoBtn.Size = UDim2.new(1, 0, 1, 0)
 	farmAutoBtn.BackgroundColor3 = Color3.fromRGB(90, 160, 90)
 	farmAutoBtn.TextColor3 = Color3.fromRGB(255,255,255)
 	local function refreshFarmBtnText()
-		farmAutoBtn.Text = string.format("🌀 FARM AUTO: %s  (Harvest %ds → Submit → Wait %ds)", farmAutoEnabled and "ON" or "OFF", farmHarvestSeconds, farmWaitSeconds)
+		farmAutoBtn.Text = string.format("🌀 FARM AUTO: %s  (Submit → Harvest %ds → Submit → Wait %ds)", farmAutoEnabled and "ON" or "OFF", farmHarvestSeconds, farmWaitSeconds)
 	end
 	refreshFarmBtnText()
 	farmAutoBtn.Font = Enum.Font.GothamBold
@@ -1594,11 +1650,15 @@ local function buildMiniPanel()
 	farmAutoBtn.Parent = rowAuto
 	rounded(farmAutoBtn, 8)
 
-	-- ======= FARM AUTO: Harvest (slider) -> Submit All -> wait (slider) -> loop =======
+	-- Annulation / OFF immédiat
 	local function stopFarmAuto()
 		if not farmAutoEnabled then return end
 		farmAutoEnabled = false
-		farmAutoToken += 1 -- annule en cours
+		farmAutoToken += 1
+		if farmAutoThread then
+			pcall(function() task.cancel(farmAutoThread) end)
+			farmAutoThread = nil
+		end
 		farmAutoBtn.BackgroundColor3 = Color3.fromRGB(90,160,90)
 		refreshFarmBtnText()
 		msg("🌀 FARM AUTO OFF.", Color3.fromRGB(230,200,180))
@@ -1610,23 +1670,33 @@ local function buildMiniPanel()
 		farmAutoBtn.BackgroundColor3 = Color3.fromRGB(80,180,100)
 		refreshFarmBtnText()
 		msg("🌀 FARM AUTO ON.", Color3.fromRGB(180,230,180))
-		task.spawn(function()
+		farmAutoThread = task.spawn(function()
 			while farmAutoEnabled and myToken == farmAutoToken do
-				-- 1) Harvest fiable (durée slider)
+				-- 0) Submit All (avant de commencer)
+				if not farmAutoEnabled or myToken ~= farmAutoToken then break end
+				submitAllCauldron_Robust()
+				if not farmAutoEnabled or myToken ~= farmAutoToken then break end
+
+				-- 1) Harvest (slider 1–5s)
 				local harvested = performTimedHarvest(farmHarvestSeconds, 26, 0.25, myToken)
-				if harvested <= 0 and farmAutoEnabled and myToken == farmAutoToken then
-					msg("🌾 Aucun prompt récolté — Retry 3s…", Color3.fromRGB(255,200,150))
-					performTimedHarvest(3, 26, 0.25, myToken)
+				if not farmAutoEnabled or myToken ~= farmAutoToken then break end
+				if harvested <= 0 then
+					msg("🌾 Peu/aucun prompt récolté — retry court (1s)…", Color3.fromRGB(255,200,150))
+					performTimedHarvest(1, 26, 0.25, myToken)
+					if not farmAutoEnabled or myToken ~= farmAutoToken then break end
 				end
+
+				-- 2) Submit All (après harvest)
+				submitAllCauldron_Robust()
 				if not farmAutoEnabled or myToken ~= farmAutoToken then break end
-				-- 2) Submit All
-				submitAllCauldron_Exact()
-				if not farmAutoEnabled or myToken ~= farmAutoToken then break end
-				-- 3) Pause (slider)
-				local t = math.max(1, math.floor(farmWaitSeconds))
-				while farmAutoEnabled and myToken == farmAutoToken and t>0 do t-=1; task.wait(1) end
+
+				-- 3) Pause (slider 3–50s) avec checks fréquents
+				local t = math.clamp(math.floor(farmWaitSeconds), 3, 50)
+				for i=1, t do
+					if not farmAutoEnabled or myToken ~= farmAutoToken then break end
+					task.wait(1)
+				end
 			end
-			-- sortie
 		end)
 	end
 
@@ -1635,6 +1705,7 @@ local function buildMiniPanel()
 	end)
 
 	-- Bind mini actions
+	btnAutoV24.MouseButton1Click:Connect(function() if AutoHarv24.enabled then AutoHarv24:stop() else AutoHarv24:start() end end)
 	btnAutoV5.MouseButton1Click:Connect(function()
 		if AutoHarv5.isEnabled() then
 			AutoHarv5.stop()
@@ -1646,18 +1717,13 @@ local function buildMiniPanel()
 			btnAutoV5.Text = "🌾 Auto Harvest v5.5: ON"
 		end
 	end)
-	btnSubmit.MouseButton1Click:Connect(function()
-		submitAllCauldron_Exact()
-	end)
-	btnAutoV24.MouseButton1Click:Connect(function()
-		if AutoHarv24.enabled then AutoHarv24:stop() else AutoHarv24:start() end
-	end)
 
 	applyAutoScale(gui)
 	miniPanelGui = gui
 	return gui
 end
 
+-- Ouvreurs
 openV5Btn.MouseButton1Click:Connect(function() AutoHarv5.openUI() end)
 openMiniBtn.MouseButton1Click:Connect(function() local g = buildMiniPanel(); g.Enabled = not g.Enabled end)
 
@@ -1674,6 +1740,4 @@ UserInputService.InputBegan:Connect(function(input, gp)
 end)
 
 -- Ready
-applyAutoScale(screenGui)
-applyAutoScale(gearGui)
-msg("✅ Saad Helper Pack chargé • UIs déplaçables • Gear Panel réduction OK • FARM AUTO sliders (harvest/wait) + arrêt fiable OFF.", Color3.fromRGB(170,230,255))
+msg("✅ Saad Helper Pack chargé • UIs déplaçables • v2.4 durée (1–6s) OK • FARM AUTO (Submit→Harvest→Submit→Wait) + OFF instantané • Pets/Eggs 'Creepy Critters' OK.", Color3.fromRGB(170,230,255))
