@@ -12,8 +12,9 @@
 --     • 🎃 Submit Halloween → Jack
 --     • 🧟 Event Pets/Eggs (Wolf, Spooky Egg, Reaper, Ghost Bear, Pumpkin Rat)
 --     • 🌀 FARM AUTO (Submit → Harvest [1–5s] → Submit → Wait [3–50s] → loop)
+-- - 🔥 ADMIN ABUSE: 30x toutes 30s (Lollipop x67) — + bouton 🎯 TP → saadeboite
 -- - Raccourcis: H = toggle Auto Harvest v2.4 • J = toggle Auto Harvest v5.5
--- - ▶️ Player Tuner: bouton "🌾 Open Harvest v5 Panel"
+-- - ▶️ Player Tuner: bouton "🌾 Open Harvest v5 Panel" + "🐾 Open Pet Scanner"
 -- - Tous les panels sont LIBREMENT déplaçables (mobile/PC), sans verrou.
 -- =====================================================================
 
@@ -44,14 +45,14 @@ local ANTI_AFK_PERIOD   = 60
 local ANTI_AFK_DURATION = 0.35
 
 -- Periods (auto-buy)
--- >>> ADMIN ABUSE support: 60s normal, 30s en mode admin
-local AUTO_PERIOD_NORMAL = 60
-local AUTO_PERIOD_ADMIN  = 30
-local AUTO_PERIOD        = AUTO_PERIOD_NORMAL
+local AUTO_PERIOD = 60 -- ❗ 60s
 
--- Delays entre FireServer (plus rapide en mode admin)
-local BUY_DELAY_NORMAL = 0.06
-local BUY_DELAY_ADMIN  = 0.02
+-- 🔥 ADMIN ABUSE — paramètres
+local ADMIN_ABUSE_PERIOD           = 30   -- toutes les 30s
+local ADMIN_ABUSE_SEED_COUNT       = 30
+local ADMIN_ABUSE_GEAR_COUNT       = 30
+local ADMIN_ABUSE_EGG_COUNT        = 30
+local ADMIN_ABUSE_LOLLIPOP_COUNT   = 67   -- exception
 
 -- Seeds/Gears/Eggs
 local SEEDS = {
@@ -75,10 +76,12 @@ local isNoclipping, noclipConnection = false, nil
 local autoBuySeeds, autoBuyGear, autoBuyEggs = true, true, true
 local seedsTimer, gearTimer, eggsTimer = AUTO_PERIOD, AUTO_PERIOD, AUTO_PERIOD
 
--- >>> ADMIN ABUSE (toggle + état)
+-- 🔥 ADMIN ABUSE state
 local adminAbuseEnabled = false
-local ADMIN_MULT_DEFAULT = 30
-local ADMIN_MULT_LOLLI   = 67
+local adminTimer = ADMIN_ABUSE_PERIOD
+local adminTimerLabel -- UI
+local adminToggleBtn  -- UI
+local adminNowBtn     -- UI
 
 -- Anti-AFK (toggle)
 local antiAFKEnabled = false
@@ -123,6 +126,24 @@ local function teleportTo(p) local hrp=getHRP(); if not hrp then msg("❌ HRP in
 local function fmtTime(sec) sec=math.max(0,math.floor(sec+0.5)) local m=math.floor(sec/60) local s=sec%60 return string.format("%d:%02d",m,s) end
 local function lower(s) return typeof(s)=="string" and string.lower(s) or "" end
 local function norm(s) s = lower(s or "") s = s:gsub("%p"," "):gsub("%s+"," ") return s end
+
+-- TP vers un joueur par son nom / displayname (insensible à la casse)
+local function teleportToPlayerByName(who)
+	who = lower(tostring(who or ""))
+	for _, pl in ipairs(Players:GetPlayers()) do
+		if lower(pl.Name) == who or lower(pl.DisplayName or "") == who then
+			local ch = pl.Character
+			local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
+			if hrp then
+				teleportTo(hrp.Position + Vector3.new(0, 3, 0))
+				msg("🎯 TP → "..pl.Name)
+				return true
+			end
+		end
+	end
+	msg("❌ Joueur introuvable: "..tostring(who), Color3.fromRGB(255,120,120))
+	return false
+end
 
 -- ====== Free Drag helper (mobile/PC) — no clamp ======
 local function makeDraggable(frame, handle)
@@ -186,6 +207,7 @@ local function getWitchesSubmitRemote()  local r=safeWait({"GameEvents","Witches
 
 -- === Submit All (robuste) — respecte l'appel exact fourni ===
 local function submitAllCauldron_Robust()
+	-- Essai 1: chemin EXACT fourni
 	for attempt = 1, 2 do
 		local ok, _ = pcall(function()
 			local args = { [1] = "All" }
@@ -200,6 +222,7 @@ local function submitAllCauldron_Robust()
 			return true
 		else
 			if attempt == 2 then
+				-- Essai 2: fallback via helper
 				local rf = getWitchesSubmitRemote()
 				if rf then
 					local ok2, err2 = pcall(function() rf:InvokeServer("All") end)
@@ -315,34 +338,21 @@ local _clickTPConn = BindMetaCtrlClickTeleport({ instant=false, tpSpeed=120, yOf
 -- =========================================================
 -- ================== Auto-buy workers =====================
 -- =========================================================
--- NOTE: En mode ADMIN, on achète 30× (ou 67× pour Lollipop) chaque item
---       avec un délai plus court entre appels.
-local function getBuyDelay()
-	return adminAbuseEnabled and BUY_DELAY_ADMIN or BUY_DELAY_NORMAL
-end
-local function getMultFor(typeName, itemName)
-	if not adminAbuseEnabled then return 1 end
-	if typeName == "gear" then
-		if lower(itemName) == "levelup lollipop" then
-			return ADMIN_MULT_LOLLI
-		else
-			return ADMIN_MULT_DEFAULT
-		end
-	end
-	-- seeds / eggs
-	return ADMIN_MULT_DEFAULT
+local MAX_TRIES_PER_SEED, MAX_TRIES_PER_GEAR = 5, 5
+
+local function getBuyEventStockRemote()
+	return (safeWait({"GameEvents","BuyEventShopStock"},2) or safeWait({"GameEvents","FallMarketEvent","BuyEventShopStock"},2))
 end
 
 local function buyAllSeedsWorker()
 	local r = getBuySeedRemote(); if not r then msg("❌ BuySeedStock introuvable.", Color3.fromRGB(255,120,120)); return end
 	msg("🌱 Achat: toutes les graines… (Shop)")
 	for _, seed in ipairs(SEEDS) do
-		local mult = getMultFor("seed", seed)
-		for i=1,mult do
+		for i=1,MAX_TRIES_PER_SEED do
 			pcall(function() r:FireServer("Shop", seed) end)
-			task.wait(getBuyDelay())
+			task.wait(0.06)
 		end
-		msg("✅ "..seed.." ok.", Color3.fromRGB(160,230,180)); task.wait(0.02)
+		msg("✅ "..seed.." ok.", Color3.fromRGB(160,230,180)); task.wait(0.03)
 	end
 	msg("🎉 Seeds terminé.")
 end
@@ -351,12 +361,8 @@ local function buyAllGearWorker()
 	local r = getBuyGearRemote(); if not r then msg("❌ BuyGearStock introuvable.", Color3.fromRGB(255,120,120)); return end
 	msg("🧰 Achat: tous les gears…")
 	for _, g in ipairs(GEARS) do
-		local mult = getMultFor("gear", g)
-		for i=1,mult do
-			pcall(function() r:FireServer(g) end)
-			task.wait(getBuyDelay())
-		end
-		msg("✅ "..g.." ok.", Color3.fromRGB(180,220,200)); task.wait(0.02)
+		for i=1,MAX_TRIES_PER_GEAR do pcall(function() r:FireServer(g) end) task.wait(0.06) end
+		msg("✅ "..g.." ok.", Color3.fromRGB(180,220,200)); task.wait(0.03)
 	end
 	msg("🎉 Gears terminé.")
 end
@@ -365,15 +371,9 @@ local function buyAllEggsWorker()
 	local r = getBuyPetEggRemote(); if not r then msg("❌ BuyPetEgg introuvable.", Color3.fromRGB(255,120,120)); return end
 	msg("🥚 Achat: eggs…")
 	for _, egg in ipairs(EGGS) do
-		local mult = getMultFor("egg", egg)
-		for i=1,mult do
-			local ok, err = pcall(function() r:FireServer(egg) end)
-			if not ok and i == 1 then
-				msg(("⚠️ %s échec: %s"):format(egg, tostring(err)), Color3.fromRGB(255,180,120))
-			end
-			task.wait(getBuyDelay())
-		end
-		msg("✅ "..egg.." ok.", Color3.fromRGB(200,240,200)); task.wait(0.02)
+		local ok, err = pcall(function() r:FireServer(egg) end)
+		if ok then msg("✅ "..egg.." ok.", Color3.fromRGB(200,240,200)) else msg(("⚠️ %s échec: %s"):format(egg, tostring(err)), Color3.fromRGB(255,180,120)) end
+		task.wait(0.06)
 	end
 	msg("🎉 Eggs terminé.")
 end
@@ -389,81 +389,39 @@ local function buyLollipop50()
 	msg("✅ Lollipop x50 terminé.")
 end
 
--- =========================================================
--- =========== 🎃 Jack-O-Lantern Submit (Auto) =============
--- =========================================================
-local HALLOWEEN_FRUITS = {
-	"Bloodred Mushroom","Jack O Lantern","Jack-O-Lantern","Ghoul Root","Chicken Feed",
-	"Seer Vine","Poison Apple","Great Pumpkin","Banesberry"
-}
-local HALLOWEEN_MUT_KEYS = { "spooky","ghostly","vamp" }
+-- 🔥 ADMIN ABUSE — runOnce: 30x chaque item (Lollipop 67x)
+local function adminAbuseRunOnce()
+	local rs, rg, re = getBuySeedRemote(), getBuyGearRemote(), getBuyPetEggRemote()
+	if not rs then msg("❌ (AdminAbuse) BuySeedStock introuvable.", Color3.fromRGB(255,120,120)) end
+	if not rg then msg("❌ (AdminAbuse) BuyGearStock introuvable.", Color3.fromRGB(255,120,120)) end
+	if not re then msg("❌ (AdminAbuse) BuyPetEgg introuvable.", Color3.fromRGB(255,120,120)) end
+	msg("🔥 ADMIN ABUSE → achats massifs…", Color3.fromRGB(255,200,120))
 
-local NON_FRUIT_KEYWORDS = {
-	"egg","sprinkler","ticket","trowel","wrench","can","spray","shard","gear","seed","pet",
-	"toy","treat","glass","pot","lollipop","favorite","friendship","recall","magnifying"
-}
-
-local function strHasAny(hay, keys) hay = norm(hay) for _,k in ipairs(keys) do if hay:find(norm(k), 1, true) then return true end end return false end
-local function toolIsHalloweenFruit(tool)
-	if not (tool and tool:IsA("Tool")) then return false end
-	local nm = norm(tool.Name)
-	for _, base in ipairs(HALLOWEEN_FRUITS) do if nm:find(norm(base), 1, true) then return true end end
-	return false
-end
-local function toolHasHalloweenMutation(tool)
-	if not (tool and tool:IsA("Tool")) then return false end
-	if strHasAny(tool.Name, HALLOWEEN_MUT_KEYS) then return true end
-	for _, v in ipairs(tool:GetDescendants()) do
-		if v:IsA("StringValue") or v:IsA("IntValue") or v:IsA("BoolValue") or v:IsA("NumberValue") then
-			if strHasAny(v.Name, HALLOWEEN_MUT_KEYS) or strHasAny(tostring(v.Value), HALLOWEEN_MUT_KEYS) then return true end
-		elseif v:IsA("Folder") then
-			if strHasAny(v.Name, {"mut","mutation","mutations"}) then
-				for _, sv in ipairs(v:GetChildren()) do
-					if sv:IsA("StringValue") and strHasAny(tostring(sv.Value), HALLOWEEN_MUT_KEYS) then return true end
-				end
-			end
+	-- Seeds 30x
+	if rs then
+		for _, seed in ipairs(SEEDS) do
+			for i=1,ADMIN_ABUSE_SEED_COUNT do pcall(function() rs:FireServer("Shop", seed) end) task.wait(0.01) end
 		end
 	end
-	return false
-end
-local function toolIsNonFruit(tool)
-	if not (tool and tool:IsA("Tool")) then return true end
-	local nm = norm(tool.Name)
-	return strHasAny(nm, NON_FRUIT_KEYWORDS)
-end
-local function equipTool(tool)
-	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-	if not hum or not tool then return false end
-	pcall(function() hum:UnequipTools() end); task.wait(0.05)
-	local ok = pcall(function() hum:EquipTool(tool) end)
-	if not ok then pcall(function() tool.Parent = player.Character end) end
-	task.wait(0.12)
-	return true
-end
-local function submitJackHeld()
-	local r = safeWait({"GameEvents","SubmitJackOLanternItem"}, 2)
-	if not r or not r:IsA("RemoteEvent") then msg("❌ SubmitJackOLanternItem introuvable.", Color3.fromRGB(255,120,120)) return false end
-	local ok = pcall(function() r:FireServer("Held") end)
-	return ok
-end
-local function submitHalloweenToJackOLantern()
-	local backpack = player:FindFirstChildOfClass("Backpack") or player:WaitForChild("Backpack", 2)
-	if not backpack then msg("🎒 Backpack introuvable.", Color3.fromRGB(255,120,120)) return 0 end
-	local submitted = 0
-	for _, tool in ipairs(backpack:GetChildren()) do
-		if tool:IsA("Tool") then
-			local isH = toolIsHalloweenFruit(tool)
-			local isM = toolHasHalloweenMutation(tool)
-			if (isH or isM) and not toolIsNonFruit(tool) then
-				equipTool(tool); task.wait(0.06)
-				if submitJackHeld() then submitted += 1; task.wait(0.12) end
-			end
+	-- Gears 30x (sauf Lollipop 67x)
+	if rg then
+		for _, g in ipairs(GEARS) do
+			local times = (g == "Levelup Lollipop") and ADMIN_ABUSE_LOLLIPOP_COUNT or ADMIN_ABUSE_GEAR_COUNT
+			for i=1,times do pcall(function() rg:FireServer(g) end) task.wait(0.01) end
 		end
 	end
-	if submitted > 0 then msg(("🎃 Jack O Lantern: %d fruit(s) soumis."):format(submitted), Color3.fromRGB(180,230,180))
-	else msg("🎃 Jack O Lantern: rien à soumettre (fruits Halloween ou fruits à mutation Halloween).", Color3.fromRGB(230,200,180)) end
-	return submitted
+	-- Eggs 30x
+	if re then
+		for _, egg in ipairs(EGGS) do
+			for i=1,ADMIN_ABUSE_EGG_COUNT do pcall(function() re:FireServer(egg) end) task.wait(0.01) end
+		end
+	end
+
+	msg("✅ ADMIN ABUSE — cycle terminé.", Color3.fromRGB(180,230,180))
 end
+
+-- forward decl pour pouvoir l'appeler avant sa définition
+local setAdminAbuse
 
 -- =========================================================
 -- ================== Timers auto-buy ON ===================
@@ -472,6 +430,7 @@ local function updateTimerLabels()
 	if seedsTimerLabel then seedsTimerLabel.Text = "⏳ Next: "..fmtTime(seedsTimer) end
 	if gearTimerLabel  then gearTimerLabel.Text  = "⏳ Next: "..fmtTime(gearTimer)  end
 	if eggsTimerLabel  then eggsTimerLabel.Text  = "⏳ Next: "..fmtTime(eggsTimer)  end
+	if adminTimerLabel then adminTimerLabel.Text = "🔥 Next: "..fmtTime(adminTimer) end
 end
 task.spawn(function()
 	task.defer(function()
@@ -484,9 +443,13 @@ task.spawn(function()
 		if autoBuySeeds then seedsTimer -= 1 else seedsTimer = AUTO_PERIOD end
 		if autoBuyGear  then gearTimer  -= 1 else gearTimer  = AUTO_PERIOD end
 		if autoBuyEggs  then eggsTimer  -= 1 else eggsTimer  = AUTO_PERIOD end
+		if adminAbuseEnabled then adminTimer -= 1 else adminTimer = ADMIN_ABUSE_PERIOD end
+
 		if autoBuySeeds and seedsTimer<=0 then buyAllSeedsWorker(); seedsTimer=AUTO_PERIOD end
 		if autoBuyGear  and gearTimer<=0  then buyAllGearWorker();  gearTimer =AUTO_PERIOD end
 		if autoBuyEggs  and eggsTimer<=0  then buyAllEggsWorker();  eggsTimer =AUTO_PERIOD end
+		if adminAbuseEnabled and adminTimer<=0 then adminAbuseRunOnce(); adminTimer=ADMIN_ABUSE_PERIOD end
+
 		updateTimerLabels()
 	end
 end)
@@ -675,6 +638,26 @@ hintRow.Font = Enum.Font.Gotham; hintRow.TextSize = 12; hintRow.TextColor3 = Col
 hintRow.Text = "⌘/Ctrl + clic = TP • H: Harvest v2.4  •  J: Harvest v5.5 (turbo + stop 200)"
 hintRow.Parent = content
 
+-- Ajout bouton Pet Scanner sous le hint
+do
+	local petRow = Instance.new("Frame")
+	petRow.Size = UDim2.new(1, 0, 0, 36)
+	petRow.Position = UDim2.new(0, 0, 0, 334)
+	petRow.BackgroundTransparency = 1
+	petRow.Parent = content
+
+	local openPetBtn = Instance.new("TextButton")
+	openPetBtn.Size = UDim2.new(1, 0, 1, 0)
+	openPetBtn.BackgroundColor3 = Color3.fromRGB(115,173,255)
+	openPetBtn.TextColor3 = Color3.fromRGB(255,255,255)
+	openPetBtn.Text = "🐾 Open Pet Scanner"
+	openPetBtn.Font = Enum.Font.GothamBold
+	openPetBtn.TextSize = 13
+	openPetBtn.Parent = petRow
+	rounded(openPetBtn,8)
+	-- le handler est connecté en bas, après la définition du scanner
+end
+
 local function setAntiAFK(enabled)
 	if enabled == antiAFKEnabled then return end
 	antiAFKEnabled = enabled
@@ -732,6 +715,7 @@ end)
 closeButton.MouseButton1Click:Connect(function()
 	if isNoclipping and noclipConnection then noclipConnection:Disconnect(); noclipConnection=nil end
 	setAntiAFK(false)
+	adminAbuseEnabled = false -- coupe AdminAbuse si la fenêtre principale est fermée
 	if gearGui then gearGui:Destroy() end
 	if screenGui then screenGui:Destroy() end
 end)
@@ -745,7 +729,7 @@ gearGui.Parent = playerGui
 applyAutoScale(gearGui)
 
 gearFrame = Instance.new("Frame")
-local GEAR_FULL   = UDim2.fromOffset(280, 560) -- ↑ un peu plus haut pour nos deux nouveaux boutons
+local GEAR_FULL   = UDim2.fromOffset(280, 620) -- ↑ agrandi pour rangées Admin Abuse
 local GEAR_COLLAP = UDim2.fromOffset(280, 28)
 gearFrame.Size = GEAR_FULL
 gearFrame.Position = UDim2.fromScale(0.26, 0.04)
@@ -887,6 +871,10 @@ autoSeedsBtn.Font = Enum.Font.GothamBold
 autoSeedsBtn.TextSize = 12
 autoSeedsBtn.Parent = seedsRow
 rounded(autoSeedsBtn,8)
+autoSeedsBtn.MouseButton1Click:Connect(function()
+	autoBuySeeds = not autoBuySeeds
+	autoSeedsBtn.Text = autoBuySeeds and "Auto: ON" or "Auto: OFF"
+end)
 
 seedsTimerLabel = Instance.new("TextLabel")
 seedsTimerLabel.Size = UDim2.new(0.30, 0, 1, 0)
@@ -927,6 +915,10 @@ autoGearBtn.Font = Enum.Font.GothamBold
 autoGearBtn.TextSize = 12
 autoGearBtn.Parent = gearRow
 rounded(autoGearBtn,8)
+autoGearBtn.MouseButton1Click:Connect(function()
+	autoBuyGear = not autoBuyGear
+	autoGearBtn.Text = autoBuyGear and "Auto: ON" or "Auto: OFF"
+end)
 
 gearTimerLabel = Instance.new("TextLabel")
 gearTimerLabel.Size = UDim2.new(0.30, 0, 1, 0)
@@ -967,6 +959,10 @@ autoEggsBtn.Font = Enum.Font.GothamBold
 autoEggsBtn.TextSize = 12
 autoEggsBtn.Parent = eggsRow
 rounded(autoEggsBtn,8)
+autoEggsBtn.MouseButton1Click:Connect(function()
+	autoBuyEggs = not autoBuyEggs
+	autoEggsBtn.Text = autoBuyEggs and "Auto: ON" or "Auto: OFF"
+end)
 
 eggsTimerLabel = Instance.new("TextLabel")
 eggsTimerLabel.Size = UDim2.new(0.30, 0, 1, 0)
@@ -991,31 +987,64 @@ lolliBtn.TextSize = 12
 lolliBtn.Parent = gearContent
 rounded(lolliBtn,8)
 
--- >>> ADMIN ABUSE TOGGLE (nouveau)
-local adminBtn = Instance.new("TextButton")
-adminBtn.Size = UDim2.new(1, 0, 0, 26)
-adminBtn.Position = UDim2.new(0, 0, 0, 254)
-adminBtn.BackgroundColor3 = Color3.fromRGB(180, 70, 70)
-adminBtn.TextColor3 = Color3.fromRGB(255,255,255)
-adminBtn.Text = "🛡️ ADMIN ABUSE: OFF  (30×/30s, Lollipop 67×)"
-adminBtn.Font = Enum.Font.GothamBold
-adminBtn.TextSize = 12
-adminBtn.Parent = gearContent
-rounded(adminBtn,8)
+-- 🔥 ADMIN ABUSE rows
+local adminRow = Instance.new("Frame")
+adminRow.Size = UDim2.new(1, 0, 0, 26)
+adminRow.Position = UDim2.new(0, 0, 0, 254)
+adminRow.BackgroundTransparency = 1
+adminRow.Parent = gearContent
 
--- >>> TP vers joueur saadeboite (nouveau)
-local tpSaadBtn = Instance.new("TextButton")
-tpSaadBtn.Size = UDim2.new(1, 0, 0, 26)
-tpSaadBtn.Position = UDim2.new(0, 0, 0, 286)
-tpSaadBtn.BackgroundColor3 = Color3.fromRGB(90, 170, 110)
-tpSaadBtn.TextColor3 = Color3.fromRGB(255,255,255)
-tpSaadBtn.Text = "📍 TP → saadeboite"
-tpSaadBtn.Font = Enum.Font.GothamBold
-tpSaadBtn.TextSize = 12
-tpSaadBtn.Parent = gearContent
-rounded(tpSaadBtn,8)
+adminToggleBtn = Instance.new("TextButton")
+adminToggleBtn.Size = UDim2.new(0.48, -4, 1, 0)
+adminToggleBtn.Position = UDim2.new(0, 0, 0, 0)
+adminToggleBtn.BackgroundColor3 = Color3.fromRGB(200, 90, 70)
+adminToggleBtn.TextColor3 = Color3.fromRGB(255,255,255)
+adminToggleBtn.Text = "🔥 ADMIN ABUSE: OFF (30x/30s • Lolli67)"
+adminToggleBtn.Font = Enum.Font.GothamBold
+adminToggleBtn.TextSize = 12
+adminToggleBtn.Parent = adminRow
+rounded(adminToggleBtn,8)
 
--- gear actions
+adminTimerLabel = Instance.new("TextLabel")
+adminTimerLabel.Size = UDim2.new(0.52, 0, 1, 0)
+adminTimerLabel.Position = UDim2.new(0.48, 4, 0, 0)
+adminTimerLabel.BackgroundColor3 = Color3.fromRGB(70, 60, 95)
+adminTimerLabel.TextColor3 = Color3.fromRGB(230, 235, 255)
+adminTimerLabel.Text = "🔥 Next: 0:30"
+adminTimerLabel.Font = Enum.Font.Gotham
+adminTimerLabel.TextSize = 12
+adminTimerLabel.Parent = adminRow
+rounded(adminTimerLabel,8)
+
+local adminCtlRow = Instance.new("Frame")
+adminCtlRow.Size = UDim2.new(1, 0, 0, 26)
+adminCtlRow.Position = UDim2.new(0, 0, 0, 286)
+adminCtlRow.BackgroundTransparency = 1
+adminCtlRow.Parent = gearContent
+
+adminNowBtn = Instance.new("TextButton")
+adminNowBtn.Size = UDim2.new(0.48, -4, 1, 0)
+adminNowBtn.Position = UDim2.new(0, 0, 0, 0)
+adminNowBtn.BackgroundColor3 = Color3.fromRGB(210, 120, 80)
+adminNowBtn.TextColor3 = Color3.fromRGB(255,255,255)
+adminNowBtn.Text = "⚡ Run ADMIN ABUSE now"
+adminNowBtn.Font = Enum.Font.GothamBold
+adminNowBtn.TextSize = 12
+adminNowBtn.Parent = adminCtlRow
+rounded(adminNowBtn,8)
+
+local tpSaadeBtn = Instance.new("TextButton")
+tpSaadeBtn.Size = UDim2.new(0.52, 0, 1, 0)
+tpSaadeBtn.Position = UDim2.new(0.48, 4, 0, 0)
+tpSaadeBtn.BackgroundColor3 = Color3.fromRGB(90, 160, 110)
+tpSaadeBtn.TextColor3 = Color3.fromRGB(255,255,255)
+tpSaadeBtn.Text = "🎯 TP → saadeboite"
+tpSaadeBtn.Font = Enum.Font.GothamBold
+tpSaadeBtn.TextSize = 12
+tpSaadeBtn.Parent = adminCtlRow
+rounded(tpSaadeBtn,8)
+
+-- actions gear
 tpGear.MouseButton1Click:Connect(function() teleportTo(GEAR_SHOP_POS) end)
 sellBtn.MouseButton1Click:Connect(function()
 	local r = getSellInventoryRemote()
@@ -1033,36 +1062,31 @@ buyAllGearButton.MouseButton1Click:Connect(function() buyAllGearWorker();  gearT
 buyEggsButton.MouseButton1Click:Connect(function() buyAllEggsWorker();   eggsTimer = AUTO_PERIOD; updateTimerLabels() end)
 lolliBtn.MouseButton1Click:Connect(buyLollipop50)
 
--- ADMIN toggle + timers/reset
-local function setAdminAbuse(enabled)
-	if adminAbuseEnabled == enabled then return end
-	adminAbuseEnabled = enabled
-	AUTO_PERIOD = enabled and AUTO_PERIOD_ADMIN or AUTO_PERIOD_NORMAL
-	adminBtn.BackgroundColor3 = enabled and Color3.fromRGB(90,180,90) or Color3.fromRGB(180,70,70)
-	adminBtn.Text = enabled and "🛡️ ADMIN ABUSE: ON  (30×/30s, Lollipop 67×)" or "🛡️ ADMIN ABUSE: OFF  (30×/30s, Lollipop 67×)"
-	-- relance rapide des timers
-	seedsTimer = 0; gearTimer = 0; eggsTimer = 0
-	updateTimerLabels()
-	msg(enabled and "🛡️ ADMIN ABUSE activé — achats 30×/30s (Lollipop 67×)." or "🛡️ ADMIN ABUSE désactivé.", enabled and Color3.fromRGB(170,230,180) or Color3.fromRGB(230,200,180))
-end
-adminBtn.MouseButton1Click:Connect(function() setAdminAbuse(not adminAbuseEnabled) end)
-
--- TP vers @saadeboite
-local function tpToSaadeboite()
-	local target = nil
-	for _,pl in ipairs(Players:GetPlayers()) do
-		if lower(pl.Name) == "saadeboite" or lower(pl.DisplayName or "") == "saadeboite" then
-			target = pl; break
-		end
+-- setter Admin Abuse (toggle + UI + désactive autos réguliers)
+setAdminAbuse = function(on)
+	if on == adminAbuseEnabled then return end
+	adminAbuseEnabled = on
+	if adminAbuseEnabled then
+		-- coupe les auto-buy classiques pour éviter les doubles achats
+		autoBuySeeds, autoBuyGear, autoBuyEggs = false, false, false
+		if autoSeedsBtn then autoSeedsBtn.Text = "Auto: OFF" end
+		if autoGearBtn  then autoGearBtn.Text  = "Auto: OFF" end
+		if autoEggsBtn  then autoEggsBtn.Text  = "Auto: OFF" end
+		adminTimer = ADMIN_ABUSE_PERIOD
+		adminToggleBtn.BackgroundColor3 = Color3.fromRGB(90, 180, 90)
+		adminToggleBtn.Text = "🔥 ADMIN ABUSE: ON (30x/30s • Lolli67)"
+		msg("🔥 ADMIN ABUSE ON — 30x/30s (Lollipop 67x).", Color3.fromRGB(255,220,150))
+	else
+		adminToggleBtn.BackgroundColor3 = Color3.fromRGB(200, 90, 70)
+		adminToggleBtn.Text = "🔥 ADMIN ABUSE: OFF (30x/30s • Lolli67)"
+		msg("🔥 ADMIN ABUSE OFF.", Color3.fromRGB(230,200,180))
 	end
-	if not target then msg("📍 'saadeboite' introuvable sur le serveur.", Color3.fromRGB(255,180,160)); return end
-	local char = target.Character or target.CharacterAdded:Wait()
-	local hrpT = char and char:FindFirstChild("HumanoidRootPart")
-	if not hrpT then msg("📍 HRP de 'saadeboite' introuvable.", Color3.fromRGB(255,180,160)); return end
-	teleportTo(hrpT.Position + Vector3.new(0,3,0))
-	msg("📍 TP sur 'saadeboite' effectué.", Color3.fromRGB(180,230,200))
+	updateTimerLabels()
 end
-tpSaadBtn.MouseButton1Click:Connect(tpToSaadeboite)
+
+adminToggleBtn.MouseButton1Click:Connect(function() setAdminAbuse(not adminAbuseEnabled) end)
+adminNowBtn.MouseButton1Click:Connect(function() adminAbuseRunOnce() adminTimer = ADMIN_ABUSE_PERIOD updateTimerLabels() end)
+tpSaadeBtn.MouseButton1Click:Connect(function() teleportToPlayerByName("saadeboite") end)
 
 local function toggleGear() gearFrame.Visible = not gearFrame.Visible end
 gearClose.MouseButton1Click:Connect(function() gearFrame.Visible = false end)
@@ -1221,13 +1245,16 @@ function AutoHarv24:start()
 	end
 	msg("🌾 AutoHarvest v2.4 ON.", Color3.fromRGB(180,230,180))
 
+	-- Boucle limitée par le slider (1–6s) + conditions d’arrêt
 	local stopAt = os.clock() + runSecs
 	task.spawn(function()
 		while self.enabled do
+			-- arrêt durée
 			if os.clock() >= stopAt then
 				self:stop("durée atteinte")
 				break
 			end
+			-- arrêt backpack plein (option)
 			if self.config.stopWhenBackpackFull then
 				local full, c, m = isBackpackFull()
 				if full then
@@ -1235,11 +1262,13 @@ function AutoHarv24:start()
 					break
 				end
 			end
+			-- récolte proche
 			local prompts = getNearbyPlantPrompts(self.config.radius, true)
 			for _, prompt in ipairs(prompts) do
 				if not self.enabled then break end
 				safeFirePrompt(prompt, self.config.holdCap)
 			end
+			-- spam E optionnel
 			if self.config.spamE then
 				VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game); task.wait(0.03)
 				VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
@@ -1661,7 +1690,7 @@ local function buildMiniPanel()
 		b.MouseButton1Click:Connect(function()
 			b.AutoButtonColor=false; b.BackgroundColor3=Color3.fromRGB(75, 110, 160)
 			task.spawn(function()
-				local r = safeWait({"GameEvents","BuyEventShopStock"},2)
+				local r = getBuyEventStockRemote()
 				if not r or not r:IsA("RemoteEvent") then
 					msg("Remote BuyEventShopStock introuvable.", Color3.fromRGB(255,120,120))
 				else
@@ -1708,6 +1737,7 @@ local function buildMiniPanel()
 	hint.TextSize = 12
 	hint.Parent = row4
 
+	-- 🔧 Slider v2.4 (1–6s)
 	local v24SliderRow = Instance.new("Frame"); v24SliderRow.Size = UDim2.new(1, 0, 0, 60); v24SliderRow.Position = UDim2.new(0, 0, 0, 420); v24SliderRow.BackgroundTransparency = 1; v24SliderRow.Parent = container
 	local v24Slider = createSlider(v24SliderRow, 0, "🌾 v2.4 Run Duration (1–6s)", 1, 6, 1, harv24DurationSeconds, function(v)
 		harv24DurationSeconds = v
@@ -1716,10 +1746,12 @@ local function buildMiniPanel()
 		end
 	end, 0)
 
+	-- ===== Sliders FARM AUTO =====
 	local slidersRow = Instance.new("Frame"); slidersRow.Size = UDim2.new(1, 0, 0, 120); slidersRow.Position = UDim2.new(0, 0, 0, 480); slidersRow.BackgroundTransparency = 1; slidersRow.Parent = container
 	local harvestSlider = createSlider(slidersRow, 0,   "🌀 Harvest Duration (1–5s)",  1, 5, 1, farmHarvestSeconds, function(v) farmHarvestSeconds = v end, 0)
 	local waitSlider    = createSlider(slidersRow, 60,  "⏳ Wait After Submit (3–50s)", 3, 50,1, farmWaitSeconds,    function(v) farmWaitSeconds = v end, 0)
 
+	-- ===== FARM AUTO Button =====
 	local rowAuto = Instance.new("Frame"); rowAuto.Size = UDim2.new(1, 0, 0, 40); rowAuto.Position = UDim2.new(0, 0, 0, 600); rowAuto.BackgroundTransparency = 1; rowAuto.Parent = container
 	local farmAutoBtn = Instance.new("TextButton")
 	farmAutoBtn.Size = UDim2.new(1, 0, 1, 0)
@@ -1734,6 +1766,7 @@ local function buildMiniPanel()
 	farmAutoBtn.Parent = rowAuto
 	rounded(farmAutoBtn, 8)
 
+	-- Annulation / OFF immédiat
 	local function stopFarmAuto()
 		if not farmAutoEnabled then return end
 		farmAutoEnabled = false
@@ -1755,9 +1788,12 @@ local function buildMiniPanel()
 		msg("🌀 FARM AUTO ON.", Color3.fromRGB(180,230,180))
 		farmAutoThread = task.spawn(function()
 			while farmAutoEnabled and myToken == farmAutoToken do
+				-- 0) Submit All (avant de commencer)
+				if not farmAutoEnabled or myToken ~= farmAutoToken then break end
 				submitAllCauldron_Robust()
 				if not farmAutoEnabled or myToken ~= farmAutoToken then break end
 
+				-- 1) Harvest (slider 1–5s)
 				local harvested = performTimedHarvest(farmHarvestSeconds, 26, 0.25, myToken)
 				if not farmAutoEnabled or myToken ~= farmAutoToken then break end
 				if harvested <= 0 then
@@ -1766,9 +1802,11 @@ local function buildMiniPanel()
 					if not farmAutoEnabled or myToken ~= farmAutoToken then break end
 				end
 
+				-- 2) Submit All (après harvest)
 				submitAllCauldron_Robust()
 				if not farmAutoEnabled or myToken ~= farmAutoToken then break end
 
+				-- 3) Pause (slider 3–50s) avec checks fréquents
 				local t = math.clamp(math.floor(farmWaitSeconds), 3, 50)
 				for i=1, t do
 					if not farmAutoEnabled or myToken ~= farmAutoToken then break end
@@ -1782,6 +1820,7 @@ local function buildMiniPanel()
 		if farmAutoEnabled then stopFarmAuto() else startFarmAuto() end
 	end)
 
+	-- Bind mini actions
 	btnAutoV24.MouseButton1Click:Connect(function() if AutoHarv24.enabled then AutoHarv24:stop() else AutoHarv24:start() end end)
 	btnAutoV5.MouseButton1Click:Connect(function()
 		if AutoHarv5.isEnabled() then
@@ -1800,6 +1839,7 @@ local function buildMiniPanel()
 	return gui
 end
 
+-- Ouvreurs
 openV5Btn.MouseButton1Click:Connect(function() AutoHarv5.openUI() end)
 openMiniBtn.MouseButton1Click:Connect(function() local g = buildMiniPanel(); g.Enabled = not g.Enabled end)
 
@@ -1820,17 +1860,15 @@ msg("✅ Saad Helper Pack chargé • UIs déplaçables • v2.4 durée (1–6s)
 
 -- =====================================================================
 -- 🐾 INTEGRATION PET SCANNER — AJOUT POUR GaGfarming1.lua
--- Coller ce bloc tout en bas du fichier, après le code existant.
--- - Ajoute un bouton "🐾 Open Pet Scanner" dans le Player Tuner
--- - Ouvre/ferme une UI pour scanner les pets dans le Backpack
--- - Totalement encapsulé, pas de conflit avec l'existant
 -- =====================================================================
 
 -- Hotkey supplémentaire (P) : toggle Pet Scanner
-local UserInputService = game:GetService("UserInputService")
+-- (Attention: on re-référence le service ici pour encapsulation locale du scanner)
+local UserInputService_PS = game:GetService("UserInputService")
 
 -- ========================= PetScanner (encapsulé) =========================
 local function LaunchOrToggle_BackpackPetScanner()
+	-- Si déjà ouvert → toggle
 	do
 		local existing = (playerGui:FindFirstChild("BackpackPetScannerUI"))
 		if existing then
@@ -1846,6 +1884,7 @@ local function LaunchOrToggle_BackpackPetScanner()
 		end
 	end
 
+	-- ---------- Config listes ----------
 	local PET_WHITELIST = {
 		["Bald Eagle"]=true,["Idol Chipmunk"]=true,["Farmer Chipmunk"]=true,
 	}
@@ -1863,9 +1902,11 @@ local function LaunchOrToggle_BackpackPetScanner()
 	local FRUIT_SET, GEAR_SET = toSetLower(FRUITS), toSetLower(GEARS)
 	local function hasWord(hay, needle) return type(hay)=="string" and hay:match("%f[%a]"..needle.."%f[%A]")~=nil end
 
+	-- ---------- Utils ----------
 	local function safeIsA(x, cls) return typeof(x)=="Instance" and x:IsA(cls) end
 	local function trim(s) return (s:gsub("%s+"," "):gsub("^%s+",""):gsub("%s+$","")) end
 
+	-- ---------- Parse ----------
 	local function parsePetMeta(raw)
 		if type(raw)~="string" then return nil end
 		local lower = string.lower(raw)
@@ -1884,9 +1925,11 @@ local function LaunchOrToggle_BackpackPetScanner()
 		return {nameRaw=raw,nameBase=(#base>0 and base or raw),kg=kg,age=age}
 	end
 
+	-- ---------- Formule officielle ----------
 	local function kgAtLvl1(kg,age) kg=tonumber(kg) or 0; age=tonumber(age) or 0; return (kg*10)/(age+10) end
 	local function noteFromKg1(k1) if k1<2 then return "Small",1 elseif k1<5 then return "Medium",2 elseif k1<7 then return "Gros",3 else return "Titanic",4 end end
 
+	-- ---------- Filtre ----------
 	local STRICT_WHITELIST=false
 	local function isFruitOrGear(baseLower)
 		for f,_ in pairs(FRUIT_SET) do if hasWord(baseLower,f) or baseLower==f then return true end end
@@ -1908,6 +1951,7 @@ local function LaunchOrToggle_BackpackPetScanner()
 		return isPetByHeur(meta)
 	end
 
+	-- ---------- Scan backpack ----------
 	local function scanBackpackPets()
 		local bp = player:FindFirstChildOfClass("Backpack") or player:WaitForChild("Backpack",2)
 		if not bp then return {} end
@@ -1924,6 +1968,7 @@ local function LaunchOrToggle_BackpackPetScanner()
 		return out
 	end
 
+	-- ---------- UI ----------
 	local GuiParent = playerGui
 	local ScreenGui = Instance.new("ScreenGui")
 	ScreenGui.Name="BackpackPetScannerUI"; ScreenGui.ResetOnSpawn=false
@@ -1955,6 +2000,7 @@ local function LaunchOrToggle_BackpackPetScanner()
 		Title.Text=("🧪 Backpack Pet Scanner — %s"):format(STRICT_WHITELIST and "Whitelist only" or "Heuristic")
 	end
 
+	-- Actions bar
 	local Controls = Instance.new("Frame"); Controls.Position=UDim2.new(0,10,0,44); Controls.Size=UDim2.new(1,-20,0,32)
 	Controls.BackgroundTransparency=1; Controls.Parent=Window
 	local function mkBtn(p,x,txt,w,col)
@@ -1971,6 +2017,7 @@ local function LaunchOrToggle_BackpackPetScanner()
 	Status.Font=Enum.Font.SourceSans; Status.TextSize=20; Status.TextXAlignment=Enum.TextXAlignment.Left; Status.TextColor3=Color3.fromRGB(200,205,210)
 	Status.Text="UI loaded ✓ — Refresh to scan."; Status.Parent=Window
 
+	-- Header triable
 	local Header=Instance.new("Frame"); Header.Position=UDim2.new(0,10,0,110); Header.Size=UDim2.new(1,-20,0,32)
 	Header.BackgroundColor3=Color3.fromRGB(28,29,33); Header.BorderSizePixel=0; corner(Header,6); Header.Parent=Window
 	local function mkCol(txt,x,w) local b=Instance.new("TextButton"); b.Size=UDim2.new(0,w,1,0); b.Position=UDim2.new(0,x,0,0)
@@ -1978,6 +2025,7 @@ local function LaunchOrToggle_BackpackPetScanner()
 	local COL={check={x=8,w=34}, nom={x=50,w=300}, age={x=360,w=80}, kg={x=450,w=80}, kg1={x=540,w=90}, note={x=640,w=90}, wladd={x=730,w=36}, act={x=770,w=28}}
 	local HNom=mkCol("Nom",COL.nom.x,COL.nom.w); local HAge=mkCol("Âge",COL.age.x,COL.age.w); local HKg=mkCol("Kg",COL.kg.x,COL.kg.w); local HKg1=mkCol("Poids@1",COL.kg1.x,COL.kg1.w); local HNote=mkCol("Note",COL.note.x,COL.note.w)
 
+	-- Liste
 	local Scroll=Instance.new("ScrollingFrame"); Scroll.Position=UDim2.new(0,10,0,150); Scroll.Size=UDim2.new(1,-20,1,-190)
 	Scroll.BackgroundColor3=Color3.fromRGB(24,25,28); Scroll.BorderSizePixel=0; Scroll.ScrollBarThickness=8; Scroll.AutomaticCanvasSize=Enum.AutomaticSize.Y
 	corner(Scroll,8); Scroll.Parent=Window
@@ -1988,6 +2036,7 @@ local function LaunchOrToggle_BackpackPetScanner()
 	local Bubble=Instance.new("TextButton"); Bubble.Visible=false; Bubble.Size=UDim2.new(0,52,0,52); Bubble.Position=UDim2.new(0,20,1,-72)
 	Bubble.Text="🐾"; Bubble.Font=Enum.Font.SourceSansBold; Bubble.TextSize=28; Bubble.TextColor3=Color3.new(1,1,1); Bubble.BackgroundColor3=Color3.fromRGB(115,173,255); corner(Bubble,26); Bubble.Parent=ScreenGui
 
+	-- Drag
 	do
 		local dragging=false; local startPos; local dragStart
 		TitleBar.InputBegan:Connect(function(input)
@@ -2005,6 +2054,7 @@ local function LaunchOrToggle_BackpackPetScanner()
 		end)
 	end
 
+	-- Data + tri
 	local items, selection, sortCol, sortAsc = {}, {}, "note", false
 	local function keyFor(m) return tostring(m.ref or m.nameRaw or m.nameBase) end
 	local function clearRows() for _,ch in ipairs(Scroll:GetChildren()) do if ch:IsA("Frame") then ch:Destroy() end end end
@@ -2023,6 +2073,7 @@ local function LaunchOrToggle_BackpackPetScanner()
 		end)
 	end
 
+	-- Ligne
 	local function makeRow(m)
 		local row=Instance.new("Frame"); row.Size=UDim2.new(1,-10,0,40); row.BackgroundColor3=Color3.fromRGB(36,38,43); row.BorderSizePixel=0; corner(row,8); row.Parent=Scroll
 		local k=keyFor(m); if selection[k]==nil then selection[k]=false end
@@ -2033,7 +2084,7 @@ local function LaunchOrToggle_BackpackPetScanner()
 		local RowClick=Instance.new("TextButton"); RowClick.BackgroundTransparency=1; RowClick.Text=""; RowClick.Size=UDim2.new(1,0,1,0); RowClick.ZIndex=0; RowClick.Parent=row; RowClick.MouseButton1Click:Connect(toggleSel)
 		local function lbl(x,w,txt,bold) local L=Instance.new("TextLabel"); L.BackgroundTransparency=1; L.Position=UDim2.new(0,x,0,0); L.Size=UDim2.new(0,w,1,0); L.Font=bold and Enum.Font.SourceSansBold or Enum.Font.SourceSans; L.TextSize=18; L.TextColor3=Color3.fromRGB(230,230,235); L.TextXAlignment=Enum.TextXAlignment.Left; L.Text=txt; L.Parent=row end
 		lbl(COL.nom.x,COL.nom.w,m.nameBase,false); lbl(COL.age.x,COL.age.w,tostring(m.age or "?"),false); lbl(COL.kg.x,COL.kg.w,string.format("%.2f",m.kg or 0),false); lbl(COL.kg1.x,COL.kg1.w,string.format("%.2f",m.kg1 or 0),false)
-		lbl(COL.note.x,COL.note.w,m.note or "?",true)
+		lbl(COL.note.x,COL.note.w,m.note ou "?",true)
 		local WL=Instance.new("TextButton"); WL.Size=UDim2.new(0,28,0,28); WL.Position=UDim2.new(0,COL.wladd.x,0.5,-14); WL.Text="＋"; WL.Font=Enum.Font.SourceSansBold; WL.TextSize=18; WL.TextColor3=Color3.new(1,1,1); WL.BackgroundColor3=Color3.fromRGB(90,150,220); corner(WL,6); WL.Parent=row
 		WL.MouseButton1Click:Connect(function() PET_WHITELIST[m.nameBase]=true; Status.Text=("Ajouté à la whitelist: %s"):format(m.nameBase) end)
 		local Del=Instance.new("TextButton"); Del.Size=UDim2.new(0,28,0,28); Del.Position=UDim2.new(0,COL.act.x,0.5,-14); Del.Text="🗑️"; Del.Font=Enum.Font.SourceSansBold; Del.TextSize=18; Del.TextColor3=Color3.new(1,1,1); Del.BackgroundColor3=Color3.fromRGB(180,70,70); corner(Del,6); Del.Parent=row
@@ -2055,6 +2106,7 @@ local function LaunchOrToggle_BackpackPetScanner()
 	HKg1.MouseButton1Click:Connect(function() setSort("kg1") end)
 	HNote.MouseButton1Click:Connect(function() setSort("note") end)
 
+	-- Hooks inventaire
 	local function hookInv()
 		local bp = player:FindFirstChildOfClass("Backpack")
 		if bp then
@@ -2065,6 +2117,7 @@ local function LaunchOrToggle_BackpackPetScanner()
 	end
 	hookInv()
 
+	-- Boutons
 	BtnRefresh.MouseButton1Click:Connect(function() Status.Text="Refreshing..."; populate() end)
 	BtnSelectAll.MouseButton1Click:Connect(function() for _,m in ipairs(items) do selection[keyFor(m)]=true end; populate(); Status.Text="Tous sélectionnés." end)
 	BtnDeselect.MouseButton1Click:Connect(function() for k,_ in pairs(selection) do selection[k]=false end; populate(); Status.Text="Sélection nettoyée." end)
@@ -2083,31 +2136,26 @@ local function LaunchOrToggle_BackpackPetScanner()
 	populate()
 end
 
+-- Bouton Player Tuner → ouvre/ferme le Pet Scanner
 do
-	local petRow = Instance.new("Frame")
-	petRow.Size = UDim2.new(1, 0, 0, 36)
-	petRow.Position = UDim2.new(0, 0, 0, 334)
-	petRow.BackgroundTransparency = 1
-	petRow.Parent = content
-
-	local openPetBtn = Instance.new("TextButton")
-	openPetBtn.Size = UDim2.new(1, 0, 1, 0)
-	openPetBtn.BackgroundColor3 = Color3.fromRGB(115,173,255)
-	openPetBtn.TextColor3 = Color3.fromRGB(255,255,255)
-	openPetBtn.Text = "🐾 Open Pet Scanner"
-	openPetBtn.Font = Enum.Font.GothamBold
-	openPetBtn.TextSize = 13
-	openPetBtn.Parent = petRow
-	local function rounded(obj, r) local ui=Instance.new("UICorner"); ui.CornerRadius=UDim.new(0, r or 8); ui.Parent=obj end
-	rounded(openPetBtn,8)
-
-	openPetBtn.MouseButton1Click:Connect(LaunchOrToggle_BackpackPetScanner)
-
-	UserInputService.InputBegan:Connect(function(input, gp)
+	local pt = content:FindFirstChildWhichIsA("Frame")
+	-- (le bouton a déjà été créé plus haut; on connecte juste l'action)
+	for _, fr in ipairs(content:GetChildren()) do
+		if fr:IsA("Frame") then
+			for _, b in ipairs(fr:GetChildren()) do
+				if b:IsA("TextButton") and b.Text == "🐾 Open Pet Scanner" then
+					b.MouseButton1Click:Connect(LaunchOrToggle_BackpackPetScanner)
+				end
+			end
+		end
+	end
+	-- Hotkey P
+	UserInputService_PS.InputBegan:Connect(function(input, gp)
 		if gp then return end
 		if input.KeyCode == Enum.KeyCode.P then
 			LaunchOrToggle_BackpackPetScanner()
 		end
 	end)
 end
--- ======================= Fin Bouton UI =======================
+-- ======================= Fin PetScanner =======================
+
