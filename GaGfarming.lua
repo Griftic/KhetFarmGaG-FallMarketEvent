@@ -1,529 +1,533 @@
--- GaG — PetMover Controller (Strict PetsPhysical scan + Owner attribute)
--- Trouve tes PetMover dans workspace.PetsPhysical (directs OU imbriqués) si :GetAttribute("Owner") == ton pseudo (ou UserId)
--- Actions : Freeze ici | TP vers moi + Freeze (ultra-serré) | Unfreeze
-
---=========== Services ===========--
-local Players = game:GetService("Players")
-local UIS     = game:GetService("UserInputService")
-local SG      = game:GetService("StarterGui")
-local RS      = game:GetService("RunService")
-
-if not game:IsLoaded() then game.Loaded:Wait() end
-local LP = Players.LocalPlayer
-
---=========== Utils ===========--
-local function log(...) print("[PetMover]", ...) end
-local function notify(msg)
-	pcall(function() SG:SetCore("SendNotification", {Title="PetMover", Text=tostring(msg), Duration=2}) end)
-	log(msg)
+-- =========================================================
+-- Saad Helper - MOBILE-LITE (ASCII only) - v1.0
+-- Works on mobile executors: no emojis, no accents, no getfenv.
+-- If boot fails, shows a red error panel with the message.
+-- Features kept: Gear Panel (scroll), Admin Abuse, TP->saadeboite,
+-- Sell, Submit Cauldron, Buy All Seeds/Gear/Eggs, Lollipop x50,
+-- Timers + Anti-AFK.
+-- =========================================================
+local function bootstrap(fn)
+    local ok, err = pcall(fn)
+    if ok then return end
+    -- Minimal on-screen error panel for mobile
+    local Players = game:GetService("Players")
+    local player = Players.LocalPlayer
+    local pg = player:FindFirstChild("PlayerGui") or player:WaitForChild("PlayerGui", 2)
+    if not pg then return end
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "Saad_Mobile_Error"
+    gui.ResetOnSpawn = false
+    gui.IgnoreGuiInset = false
+    gui.Parent = pg
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.fromOffset(340, 90)
+    frame.Position = UDim2.new(0.5, -170, 0.1, 0)
+    frame.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+    frame.BorderSizePixel = 0
+    frame.Parent = gui
+    local corner = Instance.new("UICorner", frame)
+    corner.CornerRadius = UDim.new(0, 10)
+    local title = Instance.new("TextLabel")
+    title.BackgroundTransparency = 1
+    title.Size = UDim2.new(1, -12, 0, 24)
+    title.Position = UDim2.new(0, 6, 0, 6)
+    title.Text = "Script failed to start"
+    title.TextColor3 = Color3.new(1,1,1)
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 18
+    title.Parent = frame
+    local body = Instance.new("TextLabel")
+    body.BackgroundTransparency = 1
+    body.Size = UDim2.new(1, -12, 0, 50)
+    body.Position = UDim2.new(0, 6, 0, 32)
+    body.Text = tostring(err)
+    body.TextWrapped = true
+    body.TextColor3 = Color3.fromRGB(255, 230, 230)
+    body.Font = Enum.Font.Gotham
+    body.TextSize = 13
+    body.Parent = frame
 end
 
-local function getChar()
-	local ch = LP.Character or LP.CharacterAdded:Wait()
-	ch:WaitForChild("HumanoidRootPart"); ch:WaitForChild("Humanoid")
-	return ch
-end
+bootstrap(function()
+    -- ============================ Services & locals
+    local Players = game:GetService("Players")
+    local UserInputService = game:GetService("UserInputService")
+    local RunService = game:GetService("RunService")
+    local StarterGui = game:GetService("StarterGui")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local TweenService = game:GetService("TweenService")
+    local Workspace = game:GetService("Workspace")
+    local VirtualUser = game:GetService("VirtualUser")
 
-local function anyCFrame(inst)
-	if inst:IsA("Model") then
-		local ok, cf = pcall(function() return inst:GetPivot() end)
-		if ok and typeof(cf)=="CFrame" then return cf end
-		if inst.PrimaryPart then return inst.PrimaryPart.CFrame end
-		for _,d in ipairs(inst:GetDescendants()) do
-			if d:IsA("BasePart") then return d.CFrame end
-		end
-	elseif inst:IsA("BasePart") then
-		return inst.CFrame
-	else
-		for _,d in ipairs(inst:GetDescendants()) do
-			if d:IsA("BasePart") then return d.CFrame end
-		end
-	end
-	return CFrame.new()
-end
+    local player = Players.LocalPlayer
+    local playerGui = player:WaitForChild("PlayerGui")
 
-local function pivotTo(root, cf)
-	if root:IsA("Model") then
-		local ok = pcall(function() root:PivotTo(cf) end)
-		if not ok then
-			local parts = {}
-			for _,d in ipairs(root:GetDescendants()) do
-				if d:IsA("BasePart") then table.insert(parts, d) end
-			end
-			local primary = root.PrimaryPart or parts[1]
-			if primary then
-				local delta = cf * primary.CFrame:Inverse()
-				for _,p in ipairs(parts) do p.CFrame = delta * p.CFrame end
-			end
-		end
-	elseif root:IsA("BasePart") then
-		root.CFrame = cf
-	end
-end
+    -- ============================ Config
+    local DEFAULTS = { speed = 16, gravity = 196.2, jump = 50 }
+    local ADMIN_AUTO_PERIOD = 30
+    local BASE_AUTO_PERIOD = 60
+    local ADMIN_TRIES_PER_ITEM = 30
+    local ADMIN_LOLLIPOP_COUNT = 67
 
--- remonte jusqu’au conteneur direct sous PetsPhysical
-local function rootUnderFolder(inst, folder)
-	local p = inst
-	while p and p.Parent and p.Parent ~= folder do p = p.Parent end
-	if p and p.Parent == folder then return p end
-	return nil
-end
+    local SEEDS = {
+        "Carrot","Strawberry","Blueberry","Orange Tulip","Tomato","Corn","Daffodil","Watermelon",
+        "Pumpkin","Apple","Bamboo","Coconut","Cactus","Dragon Fruit","Mango","Grape","Mushroom",
+        "Pepper","Cacao","Beanstalk","Ember Lily","Sugar Apple","Burning Bud","Giant Pinecone",
+        "Elder Strawberry","Romanesco","Crimson Thorn","Great Pumpkin"
+    }
+    local GEARS = {
+        "Watering Can","Trading Ticket","Trowel","Recall Wrench","Basic Sprinkler","Advanced Sprinkler",
+        "Medium Toy","Medium Treat","Godly Sprinkler","Magnifying Glass","Master Sprinkler",
+        "Cleaning Spray","Cleansing Pet Shard","Favorite Tool","Harvest Tool","Friendship Pot",
+        "Grandmaster Sprinkler","Levelup Lollipop"
+    }
+    local EGGS = { "Common Egg","Uncommon Egg","Rare Egg","Legendary Egg","Mythical Egg","Bug Egg","Jungle Egg" }
 
---=========== Matching Owner & PetMover ===========--
-local function matchesOwnerValue(val)
-	if val == nil then return false end
-	local myName  = LP.Name
-	local myId    = LP.UserId
-	local t = typeof(val)
-	if t == "string" then
-		if val == myName or val == tostring(myId) then return true end
-	elseif t == "number" then
-		if val == myId then return true end
-	elseif t == "Instance" then
-		if val.Name == myName then return true end
-	end
-	return false
-end
+    local GEAR_SHOP_POS = Vector3.new(-288, 2, -15)
+    local SELL_NPC_POS  = Vector3.new(87, 3, 0)
 
-local OWNER_KEYS = {"Owner","owner","OWNER"}
+    -- ============================ State
+    local adminAbuse = false
+    local triesSeed, triesGear, triesEgg = 5, 5, 1
+    local period = BASE_AUTO_PERIOD
+    local autoSeeds, autoGear, autoEggs = true, true, true
+    local seedsTimer, gearTimer, eggsTimer = period, period, period
+    local seedsTimerLabel, gearTimerLabel, eggsTimerLabel
 
-local function hasOwnerAttrMatch(inst)
-	for _,k in ipairs(OWNER_KEYS) do
-		local ok, v = pcall(function() return inst:GetAttribute(k) end)
-		if ok and v ~= nil and matchesOwnerValue(v) then return true, k, v end
-	end
-	-- Fallback: ValueObjects nommés Owner
-	local sv = inst:FindFirstChild("Owner")
-	if sv then
-		if sv:IsA("StringValue") and matchesOwnerValue(sv.Value) then return true, "StringValue", sv.Value end
-		if sv:IsA("ObjectValue") and matchesOwnerValue(sv.Value) then return true, "ObjectValue", sv.Value end
-		if sv:IsA("IntValue") and matchesOwnerValue(sv.Value) then return true, "IntValue", sv.Value end
-	end
-	return false
-end
+    local function nowPeriod()
+        return adminAbuse and ADMIN_AUTO_PERIOD or BASE_AUTO_PERIOD
+    end
+    local function applyPeriod()
+        period = nowPeriod()
+        seedsTimer, gearTimer, eggsTimer = period, period, period
+    end
+    local function setAdminAbuse(on)
+        adminAbuse = on and true or false
+        triesSeed = adminAbuse and ADMIN_TRIES_PER_ITEM or 5
+        triesGear = adminAbuse and ADMIN_TRIES_PER_ITEM or 5
+        triesEgg  = adminAbuse and ADMIN_TRIES_PER_ITEM or 1
+        applyPeriod()
+    end
 
-local function nameLooksLikePetMover(s)
-	if not s or s=="" then return false end
-	s = s:lower()
-	-- accepte "petmover", "pet_mover", "pet mover", "PetMover123"
-	if s:find("petmover") then return true end
-	-- parfois "mover" tout court pour les pets
-	if s:find("mover") and s:find("pet") then return true end
-	return false
-end
+    -- ============================ Helpers
+    local function msg(t)
+        pcall(function()
+            StarterGui:SetCore("ChatMakeSystemMessage", { Text = "[Saad] "..t, Color = Color3.fromRGB(210,230,255) })
+        end)
+    end
+    local function getHRP()
+        local c = player.Character
+        return c and c:FindFirstChild("HumanoidRootPart")
+    end
+    local function teleportTo(vec3)
+        local hrp = getHRP()
+        if not hrp then return end
+        pcall(function()
+            hrp.AssemblyLinearVelocity = Vector3.new()
+            hrp.AssemblyAngularVelocity = Vector3.new()
+        end)
+        local ch = player.Character
+        if ch and typeof(ch.PivotTo)=="function" then
+            ch:PivotTo(CFrame.new(vec3))
+        else
+            hrp.CFrame = CFrame.new(vec3)
+        end
+    end
+    local function fmt(sec)
+        sec = math.max(0, math.floor((sec or 0)+0.5))
+        local m = math.floor(sec/60); local s = sec%60
+        return string.format("%d:%02d", m, s)
+    end
+    local function safeWait(path, timeout)
+        local node = ReplicatedStorage
+        for _,name in ipairs(path) do
+            node = node:WaitForChild(name, timeout or 2)
+            if not node then return nil end
+        end
+        return node
+    end
+    local function updateTimersText()
+        if seedsTimerLabel then seedsTimerLabel.Text = "Next: "..fmt(seedsTimer) end
+        if gearTimerLabel  then gearTimerLabel.Text  = "Next: "..fmt(gearTimer)  end
+        if eggsTimerLabel  then eggsTimerLabel.Text  = "Next: "..fmt(eggsTimer)  end
+    end
 
-local function findPetMoverDescendant(root)
-	if nameLooksLikePetMover(root.Name) then return root end
-	for _,d in ipairs(root:GetDescendants()) do
-		if nameLooksLikePetMover(d.Name) then return d end
-	end
-	return nil
-end
+    -- ============================ Remotes
+    local function rSell()      local r=safeWait({"GameEvents","Sell_Inventory"},2) return r and r:IsA("RemoteEvent") and r end
+    local function rBuySeed()   local r=safeWait({"GameEvents","BuySeedStock"},2)   return r and r:IsA("RemoteEvent") and r end
+    local function rBuyGear()   local r=safeWait({"GameEvents","BuyGearStock"},2)   return r and r:IsA("RemoteEvent") and r end
+    local function rBuyEgg()    local r=safeWait({"GameEvents","BuyPetEgg"},2)      return r and r:IsA("RemoteEvent") and r end
+    local function rfCauldron() local r=safeWait({"GameEvents","WitchesBrew","SubmitItemToCauldron"},2) return r and r:IsA("RemoteFunction") and r end
 
--- --- TIGHT CIRCLE CONFIG ---
-local GAP_MULTIPLIER = 0.95  -- 1.00 = se touchent; <1.00 = léger chevauchement
-local MIN_RADIUS     = 0.8   -- rayon mini si très peu de pets
-local Y_OFFSET_PET   = 0.20  -- petit lift vertical pour éviter la collision sol
+    local function submitAllCauldron()
+        local rf = rfCauldron()
+        if not rf then msg("Cauldron remote not found") return false end
+        local ok,err = pcall(function() rf:InvokeServer("All") end)
+        if ok then msg("Cauldron: Submit All OK") else msg("Cauldron error: "..tostring(err)) end
+        return ok
+    end
 
--- Diamètre approx du modèle (plan XZ)
-local function getModelDiameter(root)
-	if root:IsA("Model") then
-		local ok,size = pcall(function() return root:GetExtentsSize() end)
-		if ok and size then return math.max(size.X, size.Z) end
-		if root.PrimaryPart then
-			local s = root.PrimaryPart.Size
-			return math.max(s.X, s.Z)
-		end
-	elseif root:IsA("BasePart") then
-		local s = root.Size
-		return math.max(s.X, s.Z)
-	end
-	return 2.0
-end
+    -- ============================ Workers
+    local function buyAllSeeds()
+        local r = rBuySeed(); if not r then msg("BuySeedStock not found") return end
+        msg("Buying all seeds...")
+        for _,name in ipairs(SEEDS) do
+            for i=1,triesSeed do pcall(function() r:FireServer("Shop", name) end) task.wait(0.03) end
+        end
+        msg("Seeds done")
+    end
+    local function buyAllGear()
+        local r = rBuyGear(); if not r then msg("BuyGearStock not found") return end
+        msg("Buying all gear...")
+        for _,name in ipairs(GEARS) do
+            local tries = (adminAbuse and name=="Levelup Lollipop") and ADMIN_LOLLIPOP_COUNT or triesGear
+            for i=1,tries do pcall(function() r:FireServer(name) end) task.wait(0.03) end
+        end
+        msg("Gear done")
+    end
+    local function buyAllEggs()
+        local r = rBuyEgg(); if not r then msg("BuyPetEgg not found") return end
+        msg("Buying eggs...")
+        for _,name in ipairs(EGGS) do
+            for i=1,triesEgg do pcall(function() r:FireServer(name) end) task.wait(0.03) end
+        end
+        msg("Eggs done")
+    end
+    local function buyLollipop50()
+        local r = rBuyGear(); if not r then msg("BuyGearStock not found") return end
+        for i=1,50 do pcall(function() r:FireServer("Levelup Lollipop") end) task.wait(0.03) end
+        msg("Lollipop x50 ok")
+    end
 
---=========== Scan PetsPhysical ===========--
-local PETS = {}   -- { {root=Instance, mover=Instance, name=string, frozen=bool, targetCF=CFrame} }
+    -- ============================ Auto timers
+    task.spawn(function()
+        -- start immediately one pass (optional)
+        task.defer(function()
+            if autoSeeds then task.spawn(buyAllSeeds) end
+            if autoGear  then task.spawn(buyAllGear)  end
+            if autoEggs  then task.spawn(buyAllEggs)  end
+        end)
+        while true do
+            task.wait(1)
+            if autoSeeds then seedsTimer = seedsTimer - 1 else seedsTimer = period end
+            if autoGear  then gearTimer  = gearTimer  - 1 else gearTimer  = period end
+            if autoEggs  then eggsTimer  = eggsTimer  - 1 else eggsTimer  = period end
+            if autoSeeds and seedsTimer<=0 then buyAllSeeds(); seedsTimer = period end
+            if autoGear  and gearTimer<=0  then buyAllGear();  gearTimer  = period end
+            if autoEggs  and eggsTimer<=0  then buyAllEggs();  eggsTimer  = period end
+            updateTimersText()
+        end
+    end)
 
-local function scanPets()
-	PETS = {}
-	local petsFolder = workspace:FindFirstChild("PetsPhysical") or workspace:FindFirstChild("petsphysical") or workspace:FindFirstChild("Pets_Physical")
-	if not petsFolder then notify("workspace.PetsPhysical introuvable"); return end
+    -- ============================ UI (ASCII only)
+    local function corner(obj, r) local c=Instance.new("UICorner"); c.CornerRadius=UDim.new(0, r or 8); c.Parent=obj end
+    local function autoscale(sg)
+        local cam = Workspace.CurrentCamera
+        local scale = Instance.new("UIScale"); scale.Name="AutoScale"; scale.Parent = sg
+        local function compute()
+            local vp = (cam and cam.ViewportSize) or Vector2.new(1280,720)
+            local s = vp.X / 1280
+            if vp.Y < 720 or vp.X < 1100 then s = s * 0.9 end
+            if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then s = s * 0.9 end
+            return math.clamp(s, 0.55, 1.0)
+        end
+        local function refresh() scale.Scale = compute() end
+        refresh()
+        if cam then cam:GetPropertyChangedSignal("ViewportSize"):Connect(refresh) end
+    end
 
-	-- logs
-	log("PetsPhysical trouvé:", petsFolder:GetFullName(), " | enfants:", #petsFolder:GetChildren())
+    -- Main panel (small)
+    local mainGui = Instance.new("ScreenGui")
+    mainGui.Name = "Saad_Player_Tuner_Mobile"
+    mainGui.ResetOnSpawn = false
+    mainGui.IgnoreGuiInset = false
+    mainGui.Parent = playerGui
+    autoscale(mainGui)
 
-	local seen = {}
-	-- 1) Parcourt d’abord les enfants directs (cas le plus courant)
-	for _,child in ipairs(petsFolder:GetChildren()) do
-		local mover = findPetMoverDescendant(child)
-		if mover then
-			local ownMover = hasOwnerAttrMatch(mover)
-			local ownRoot  = hasOwnerAttrMatch(child)
-			if ownMover or ownRoot then
-				local root = rootUnderFolder(mover, petsFolder) or child
-				if root and not seen[root] then
-					seen[root] = true
-					table.insert(PETS, {
-						root = root,
-						mover = mover,
-						name  = tostring(root.Name),
-						frozen = false,
-						targetCF = anyCFrame(root)
-					})
-					log("✓ Pet capturé:", root.Name, " | mover:", mover.Name)
-				end
-			end
-		end
-	end
+    local main = Instance.new("Frame")
+    main.Size = UDim2.fromOffset(300, 210)
+    main.Position = UDim2.fromScale(0.03, 0.05)
+    main.BackgroundColor3 = Color3.fromRGB(36,36,36)
+    main.BorderSizePixel = 0
+    main.Parent = mainGui
+    corner(main, 10)
 
-	-- 2) Fallback total: parcourt tous les descendants pour rater aucun cas exotique
-	if #PETS == 0 then
-		for _,d in ipairs(petsFolder:GetDescendants()) do
-			if nameLooksLikePetMover(d.Name) and hasOwnerAttrMatch(d) then
-				local root = rootUnderFolder(d, petsFolder) or d
-				if root and not seen[root] then
-					seen[root] = true
-					table.insert(PETS, {
-						root = root,
-						mover = d,
-						name  = tostring(root.Name),
-						frozen = false,
-						targetCF = anyCFrame(root)
-					})
-					log("✓ Pet (fallback) :", root.Name, " | mover:", d.Name)
-				end
-			end
-		end
-	end
+    local bar = Instance.new("Frame")
+    bar.Size = UDim2.new(1,0,0,28)
+    bar.BackgroundColor3 = Color3.fromRGB(28,28,28)
+    bar.Parent = main
+    corner(bar, 10)
 
-	table.sort(PETS, function(a,b) return a.name < b.name end)
-	notify("Pets détectés: "..tostring(#PETS))
-end
+    local title = Instance.new("TextLabel")
+    title.BackgroundTransparency = 1
+    title.Size = UDim2.new(1,-90,1,0)
+    title.Position = UDim2.new(0,10,0,0)
+    title.Text = "Saad Helper (Mobile)"
+    title.TextColor3 = Color3.new(1,1,1)
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 14
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = bar
 
---=========== Freeze Loop ===========--
-local freezeConn = nil
-local function ensureFreezeLoop()
-	if freezeConn then return end
-	freezeConn = RS.Heartbeat:Connect(function()
-		for _,p in ipairs(PETS) do
-			if p.frozen and p.targetCF then
-				pivotTo(p.root, p.targetCF)
-			end
-		end
-	end)
-end
-local function maybeStopLoop()
-	for _,p in ipairs(PETS) do if p.frozen then return end end
-	if freezeConn then freezeConn:Disconnect(); freezeConn=nil end
-end
+    local close = Instance.new("TextButton")
+    close.Size = UDim2.fromOffset(24,24)
+    close.Position = UDim2.new(1,-30,0,2)
+    close.Text = "X"
+    close.TextColor3 = Color3.new(1,1,1)
+    close.Font = Enum.Font.GothamBold
+    close.TextSize = 14
+    close.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+    close.Parent = bar
+    corner(close, 6)
+    close.MouseButton1Click:Connect(function() mainGui:Destroy() end)
 
---=========== Actions ===========--
-local function freezeHereAll()
-	if #PETS == 0 then notify("Aucun pet — clique « Scanner »"); return end
-	for _,p in ipairs(PETS) do
-		p.targetCF = anyCFrame(p.root)
-		p.frozen = true
-	end
-	ensureFreezeLoop()
-	notify("Freeze ici : "..tostring(#PETS).." pets gelés")
-end
+    -- drag
+    do
+        local dragging, startPos, startInput
+        bar.InputBegan:Connect(function(i)
+            if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
+                dragging = true; startPos = main.Position; startInput = i
+                i.Changed:Connect(function() if i.UserInputState==Enum.UserInputState.End then dragging=false end end)
+            end
+        end)
+        bar.InputChanged:Connect(function(i)
+            if not dragging then return end
+            if i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch then
+                local delta = i.Position - startInput.Position
+                main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset+delta.X, startPos.Y.Scale, startPos.Y.Offset+delta.Y)
+            end
+        end)
+    end
 
-local function bringToMeAndFreezeAll()
-	if #PETS == 0 then notify("Aucun pet — clique « Scanner »"); return end
-	local hrp    = getChar().HumanoidRootPart
-	local origin = hrp.CFrame
+    local container = Instance.new("Frame")
+    container.Size = UDim2.new(1,-14,1,-40)
+    container.Position = UDim2.new(0,7,0,34)
+    container.BackgroundTransparency = 1
+    container.Parent = main
 
-	-- Rayon calculé pour cercle ultra-serré (quasi touching)
-	local sumD  = 0
-	local diams = (table.create and table.create(#PETS)) or {}
-	for i,p in ipairs(PETS) do
-		local d = getModelDiameter(p.root)
-		if d <= 0 then d = 2 end
-		d = d * GAP_MULTIPLIER
-		diams[i] = d
-		sumD += d
-	end
-	local radius = math.max(MIN_RADIUS, sumD / (2 * math.pi))
+    local function mkBtn(y, text, color)
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.new(1, 0, 0, 28)
+        b.Position = UDim2.new(0, 0, 0, y)
+        b.Text = text
+        b.TextColor3 = Color3.new(1,1,1)
+        b.Font = Enum.Font.GothamBold
+        b.TextSize = 13
+        b.BackgroundColor3 = color or Color3.fromRGB(90,120,210)
+        b.Parent = container
+        corner(b, 8)
+        return b
+    end
 
-	-- Placement: pas angulaire = (diamètre / rayon)
-	local angle = 0
-	for i,p in ipairs(PETS) do
-		local d   = diams[i]
-		local x   = math.cos(angle) * radius
-		local z   = math.sin(angle) * radius
-		local pos = origin.Position + Vector3.new(x, Y_OFFSET_PET, z)
-		local cf  = CFrame.new(pos, origin.Position + origin.LookVector) -- regarde vers toi
+    local btnToggleGear = mkBtn(0,   "Open Gear Panel", Color3.fromRGB(60,180,60))
+    local btnAntiAFK    = mkBtn(34,  "Anti-AFK: OFF",   Color3.fromRGB(100,130,100))
+    local btnAdmin      = mkBtn(68,  "Admin Abuse: OFF",Color3.fromRGB(170,70,70))
+    local btnSaadTP     = mkBtn(102, "TP to saadeboite",Color3.fromRGB(90,150,220))
+    local btnSubmit     = mkBtn(136, "Submit All (Cauldron)", Color3.fromRGB(140,110,200))
 
-		pivotTo(p.root, cf)
-		p.targetCF = cf
-		p.frozen   = true
+    -- Anti AFK
+    local antiAFK = false
+    local idledConn; local antiThread
+    local function setAntiAFK(on)
+        if on == antiAFK then return end
+        antiAFK = on
+        btnAntiAFK.Text = antiAFK and "Anti-AFK: ON" or "Anti-AFK: OFF"
+        btnAntiAFK.BackgroundColor3 = antiAFK and Color3.fromRGB(80,140,90) or Color3.fromRGB(100,130,100)
+        if idledConn then idledConn:Disconnect(); idledConn=nil end
+        if antiThread then task.cancel(antiThread); antiThread=nil end
+        if antiAFK then
+            idledConn = player.Idled:Connect(function()
+                pcall(function() VirtualUser:CaptureController(); VirtualUser:ClickButton2(Vector2.new(0,0)) end)
+            end)
+            antiThread = task.spawn(function()
+                while antiAFK do
+                    task.wait(60)
+                    local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+                    if hum then hum:Move(Vector3.new(0,0,-1), true); task.wait(0.3); hum:Move(Vector3.new(0,0,0), true) end
+                end
+            end)
+        end
+    end
+    btnAntiAFK.MouseButton1Click:Connect(function() setAntiAFK(not antiAFK) end)
 
-		angle = angle + (d / radius) -- arc/r = delta angle
-	end
+    btnSaadTP.MouseButton1Click:Connect(function()
+        local target
+        for _,pl in ipairs(Players:GetPlayers()) do
+            if string.lower(pl.Name) == "saadeboite" then target = pl break end
+        end
+        if not target or not target.Character then msg("Player saadeboite not found") return end
+        local hrp = target.Character:FindFirstChild("HumanoidRootPart")
+        if not hrp then msg("saadeboite HRP not found") return end
+        teleportTo(hrp.Position + Vector3.new(0,3,0))
+    end)
 
-	ensureFreezeLoop()
-	notify(("TP vers toi + Freeze (ultra-serré) : %d pets • R=%.2f • gap=%.0f%%")
-		:format(#PETS, radius, (GAP_MULTIPLIER-1)*100))
-end
+    btnAdmin.MouseButton1Click:Connect(function()
+        setAdminAbuse(not adminAbuse)
+        if adminAbuse then
+            btnAdmin.BackgroundColor3 = Color3.fromRGB(80,170,80)
+            btnAdmin.Text = "Admin Abuse: ON (30x/30s, Lolli 67x)"
+            msg("Admin Abuse enabled")
+        else
+            btnAdmin.BackgroundColor3 = Color3.fromRGB(170,70,70)
+            btnAdmin.Text = "Admin Abuse: OFF"
+            msg("Admin Abuse disabled")
+        end
+    end)
 
-local function unfreezeAll()
-	for _,p in ipairs(PETS) do p.frozen=false end
-	maybeStopLoop()
-	notify("Unfreeze : tous les pets libérés")
-end
+    btnSubmit.MouseButton1Click:Connect(submitAllCauldron)
 
---=========== UI ===========--
-local pg = LP:WaitForChild("PlayerGui")
-local sg = Instance.new("ScreenGui")
-sg.Name = "Saad_PetMover_UI"
-sg.IgnoreGuiInset = true
-sg.ResetOnSpawn = false
-sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-sg.DisplayOrder = 10000
-sg.Parent = pg
+    -- ============================ Gear Panel (scroll, mobile)
+    local gearGui = Instance.new("ScreenGui")
+    gearGui.Name = "Saad_Gear_Panel"
+    gearGui.ResetOnSpawn = false
+    gearGui.IgnoreGuiInset = false
+    gearGui.Enabled = false
+    gearGui.Parent = playerGui
+    autoscale(gearGui)
 
-local reopen = Instance.new("TextButton")
-reopen.Name="Reopen"; reopen.Visible=false
-reopen.Text="🐾"; reopen.TextScaled=true
-reopen.Size=UDim2.fromOffset(56,56)
-reopen.Position=UDim2.fromOffset(16, sg.AbsoluteSize.Y-72)
-reopen.BackgroundColor3=Color3.fromRGB(35,150,90)
-reopen.TextColor3=Color3.fromRGB(245,245,250)
-reopen.Parent=sg
-Instance.new("UICorner", reopen).CornerRadius = UDim.new(0,16)
-sg:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-	reopen.Position = UDim2.fromOffset(16, sg.AbsoluteSize.Y - 72)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.fromOffset(280, 500)
+    frame.Position = UDim2.fromScale(0.28, 0.05)
+    frame.BackgroundColor3 = Color3.fromRGB(50, 50, 80)
+    frame.BorderSizePixel = 0
+    frame.Parent = gearGui
+    corner(frame, 10)
+
+    local bar2 = Instance.new("Frame")
+    bar2.Size = UDim2.new(1,0,0,28)
+    bar2.BackgroundColor3 = Color3.fromRGB(40,40,70)
+    bar2.Parent = frame
+    corner(bar2, 10)
+
+    local title2 = Instance.new("TextLabel")
+    title2.BackgroundTransparency = 1
+    title2.Size = UDim2.new(1,-60,1,0)
+    title2.Position = UDim2.new(0,10,0,0)
+    title2.Text = "GEAR SHOP"
+    title2.TextColor3 = Color3.new(1,1,1)
+    title2.Font = Enum.Font.GothamBold
+    title2.TextSize = 13
+    title2.TextXAlignment = Enum.TextXAlignment.Left
+    title2.Parent = bar2
+
+    local close2 = Instance.new("TextButton")
+    close2.Size = UDim2.fromOffset(20,20)
+    close2.Position = UDim2.new(1,-26,0,4)
+    close2.Text = "X"
+    close2.TextColor3 = Color3.new(1,1,1)
+    close2.Font = Enum.Font.GothamBold
+    close2.TextSize = 12
+    close2.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+    close2.Parent = bar2
+    corner(close2, 6)
+    close2.MouseButton1Click:Connect(function() gearGui.Enabled = false end)
+
+    -- drag
+    do
+        local dragging, startPos, startInput
+        bar2.InputBegan:Connect(function(i)
+            if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
+                dragging = true; startPos = frame.Position; startInput = i
+                i.Changed:Connect(function() if i.UserInputState==Enum.UserInputState.End then dragging=false end end)
+            end
+        end)
+        bar2.InputChanged:Connect(function(i)
+            if not dragging then return end
+            if i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch then
+                local d = i.Position - startInput.Position
+                frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset+d.X, startPos.Y.Scale, startPos.Y.Offset+d.Y)
+            end
+        end)
+    end
+
+    local content = Instance.new("ScrollingFrame")
+    content.Size = UDim2.new(1,-14,1,-40)
+    content.Position = UDim2.new(0,7,0,34)
+    content.BackgroundTransparency = 1
+    content.ScrollBarThickness = 6
+    content.ScrollingDirection = Enum.ScrollingDirection.Y
+    content.Parent = frame
+
+    local function refreshCanvas()
+        local maxY = 0
+        for _,ch in ipairs(content:GetChildren()) do
+            if ch:IsA("GuiObject") then
+                local bottom = ch.Position.Y.Offset + ch.Size.Y.Offset
+                if bottom > maxY then maxY = bottom end
+            end
+        end
+        content.CanvasSize = UDim2.new(0,0,0, maxY + 10)
+    end
+    content.ChildAdded:Connect(function() task.defer(refreshCanvas) end)
+    content.ChildRemoved:Connect(function() task.defer(refreshCanvas) end)
+
+    local function mkBtn2(y, text, col)
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.new(1, 0, 0, 28)
+        b.Position = UDim2.new(0, 0, 0, y)
+        b.Text = text
+        b.TextColor3 = Color3.new(1,1,1)
+        b.Font = Enum.Font.GothamBold
+        b.TextSize = 12
+        b.BackgroundColor3 = col or Color3.fromRGB(90,120,210)
+        b.Parent = content
+        corner(b, 8)
+        return b
+    end
+
+    local y = 0
+    local bTPGear   = mkBtn2(y,   "TP to Gear Shop", Color3.fromRGB(60,180,60)); y = y + 34
+    local bSell     = mkBtn2(y,   "Sell Inventory",  Color3.fromRGB(200,130,90)); y = y + 34
+    local bSubmit   = mkBtn2(y,   "Submit All (Cauldron)", Color3.fromRGB(140,110,200)); y = y + 34
+
+    local rowSeeds = Instance.new("Frame"); rowSeeds.Size = UDim2.new(1,0,0,28); rowSeeds.Position = UDim2.new(0,0,0,y); rowSeeds.BackgroundTransparency=1; rowSeeds.Parent=content; y=y+34
+    local bBuySeeds = Instance.new("TextButton"); bBuySeeds.Size=UDim2.new(0.48,-4,1,0); bBuySeeds.Text="Buy All Seeds"; bBuySeeds.TextColor3=Color3.new(1,1,1); bBuySeeds.Font=Enum.Font.GothamBold; bBuySeeds.TextSize=12; bBuySeeds.BackgroundColor3=Color3.fromRGB(100,170,100); bBuySeeds.Parent=rowSeeds; corner(bBuySeeds,8)
+    local bAutoSeeds = Instance.new("TextButton"); bAutoSeeds.Size=UDim2.new(0.22,-4,1,0); bAutoSeeds.Position=UDim2.new(0.48,4,0,0); bAutoSeeds.Text="Auto: ON"; bAutoSeeds.TextColor3=Color3.new(1,1,1); bAutoSeeds.Font=Enum.Font.GothamBold; bAutoSeeds.TextSize=12; bAutoSeeds.BackgroundColor3=Color3.fromRGB(70,160,90); bAutoSeeds.Parent=rowSeeds; corner(bAutoSeeds,8)
+    seedsTimerLabel = Instance.new("TextLabel"); seedsTimerLabel.Size=UDim2.new(0.30,0,1,0); seedsTimerLabel.Position=UDim2.new(0.70,4,0,0); seedsTimerLabel.BackgroundColor3=Color3.fromRGB(60,65,95); seedsTimerLabel.TextColor3=Color3.fromRGB(220,230,255); seedsTimerLabel.Font=Enum.Font.Gotham; seedsTimerLabel.TextSize=12; seedsTimerLabel.Text="Next: "..fmt(seedsTimer); seedsTimerLabel.Parent=rowSeeds; corner(seedsTimerLabel,8)
+
+    local rowGear = Instance.new("Frame"); rowGear.Size = UDim2.new(1,0,0,28); rowGear.Position = UDim2.new(0,0,0,y); rowGear.BackgroundTransparency=1; rowGear.Parent=content; y=y+34
+    local bBuyGear = Instance.new("TextButton"); bBuyGear.Size=UDim2.new(0.48,-4,1,0); bBuyGear.Text="Buy All Gear"; bBuyGear.TextColor3=Color3.new(1,1,1); bBuyGear.Font=Enum.Font.GothamBold; bBuyGear.TextSize=12; bBuyGear.BackgroundColor3=Color3.fromRGB(120,140,200); bBuyGear.Parent=rowGear; corner(bBuyGear,8)
+    local bAutoGear = Instance.new("TextButton"); bAutoGear.Size=UDim2.new(0.22,-4,1,0); bAutoGear.Position=UDim2.new(0.48,4,0,0); bAutoGear.Text="Auto: ON"; bAutoGear.TextColor3=Color3.new(1,1,1); bAutoGear.Font=Enum.Font.GothamBold; bAutoGear.TextSize=12; bAutoGear.BackgroundColor3=Color3.fromRGB(70,140,180); bAutoGear.Parent=rowGear; corner(bAutoGear,8)
+    gearTimerLabel = Instance.new("TextLabel"); gearTimerLabel.Size=UDim2.new(0.30,0,1,0); gearTimerLabel.Position=UDim2.new(0.70,4,0,0); gearTimerLabel.BackgroundColor3=Color3.fromRGB(60,65,95); gearTimerLabel.TextColor3=Color3.fromRGB(220,230,255); gearTimerLabel.Font=Enum.Font.Gotham; gearTimerLabel.TextSize=12; gearTimerLabel.Text="Next: "..fmt(gearTimer); gearTimerLabel.Parent=rowGear; corner(gearTimerLabel,8)
+
+    local rowEggs = Instance.new("Frame"); rowEggs.Size = UDim2.new(1,0,0,28); rowEggs.Position = UDim2.new(0,0,0,y); rowEggs.BackgroundTransparency=1; rowEggs.Parent=content; y=y+34
+    local bBuyEggs = Instance.new("TextButton"); bBuyEggs.Size=UDim2.new(0.48,-4,1,0); bBuyEggs.Text="Buy Eggs"; bBuyEggs.TextColor3=Color3.new(1,1,1); bBuyEggs.Font=Enum.Font.GothamBold; bBuyEggs.TextSize=12; bBuyEggs.BackgroundColor3=Color3.fromRGB(150,120,200); bBuyEggs.Parent=rowEggs; corner(bBuyEggs,8)
+    local bAutoEggs = Instance.new("TextButton"); bAutoEggs.Size=UDim2.new(0.22,-4,1,0); bAutoEggs.Position=UDim2.new(0.48,4,0,0); bAutoEggs.Text="Auto: ON"; bAutoEggs.TextColor3=Color3.new(1,1,1); bAutoEggs.Font=Enum.Font.GothamBold; bAutoEggs.TextSize=12; bAutoEggs.BackgroundColor3=Color3.fromRGB(120,100,160); bAutoEggs.Parent=rowEggs; corner(bAutoEggs,8)
+    eggsTimerLabel = Instance.new("TextLabel"); eggsTimerLabel.Size=UDim2.new(0.30,0,1,0); eggsTimerLabel.Position=UDim2.new(0.70,4,0,0); eggsTimerLabel.BackgroundColor3=Color3.fromRGB(60,65,95); eggsTimerLabel.TextColor3=Color3.fromRGB(220,230,255); eggsTimerLabel.Font=Enum.Font.Gotham; eggsTimerLabel.TextSize=12; eggsTimerLabel.Text="Next: "..fmt(eggsTimer); eggsTimerLabel.Parent=rowEggs; corner(eggsTimerLabel,8)
+
+    local bLolli = mkBtn2(y, "Buy Lollipop x50", Color3.fromRGB(200,140,90)); y = y + 34
+    local adminRow = Instance.new("Frame"); adminRow.Size = UDim2.new(1,0,0,28); adminRow.Position = UDim2.new(0,0,0,y); adminRow.BackgroundTransparency=1; adminRow.Parent=content; y=y+34
+    local bAdmin   = Instance.new("TextButton"); bAdmin.Size=UDim2.new(0.58,-4,1,0); bAdmin.Text="Admin Abuse: OFF"; bAdmin.TextColor3=Color3.new(1,1,1); bAdmin.Font=Enum.Font.GothamBold; bAdmin.TextSize=12; bAdmin.BackgroundColor3=Color3.fromRGB(170,70,70); bAdmin.Parent=adminRow; corner(bAdmin,8)
+    local bSaadTP2 = Instance.new("TextButton"); bSaadTP2.Size=UDim2.new(0.42,0,1,0); bSaadTP2.Position=UDim2.new(0.58,4,0,0); bSaadTP2.Text="TP to saadeboite"; bSaadTP2.TextColor3=Color3.new(1,1,1); bSaadTP2.Font=Enum.Font.GothamBold; bSaadTP2.TextSize=12; bSaadTP2.BackgroundColor3=Color3.fromRGB(90,150,220); bSaadTP2.Parent=adminRow; corner(bSaadTP2,8)
+
+    -- actions
+    bTPGear.MouseButton1Click:Connect(function() teleportTo(GEAR_SHOP_POS) end)
+    bSell.MouseButton1Click:Connect(function()
+        local r = rSell(); if not r then msg("Sell remote not found") return end
+        local hrp = getHRP(); if not hrp then return end
+        local back = hrp.CFrame
+        teleportTo(SELL_NPC_POS); task.wait(0.2); r:FireServer(); task.wait(0.05); hrp.CFrame = back
+        msg("Sold inventory")
+    end)
+    bSubmit.MouseButton1Click:Connect(submitAllCauldron)
+    bBuySeeds.MouseButton1Click:Connect(function() buyAllSeeds(); seedsTimer = period; updateTimersText() end)
+    bBuyGear.MouseButton1Click:Connect(function() buyAllGear();  gearTimer  = period; updateTimersText() end)
+    bBuyEggs.MouseButton1Click:Connect(function() buyAllEggs();  eggsTimer  = period; updateTimersText() end)
+    bLolli.MouseButton1Click:Connect(buyLollipop50)
+    bAdmin.MouseButton1Click:Connect(function()
+        setAdminAbuse(not adminAbuse)
+        if adminAbuse then
+            bAdmin.BackgroundColor3 = Color3.fromRGB(80,170,80)
+            bAdmin.Text = "Admin Abuse: ON (30x/30s, Lolli 67x)"
+        else
+            bAdmin.BackgroundColor3 = Color3.fromRGB(170,70,70)
+            bAdmin.Text = "Admin Abuse: OFF"
+        end
+    end)
+    bSaadTP2.MouseButton1Click:Connect(function() btnSaadTP:Activate() end)
+
+    btnToggleGear.MouseButton1Click:Connect(function() gearGui.Enabled = not gearGui.Enabled end)
+
+    -- Ready
+    msg("Mobile-LITE loaded")
 end)
-
-local frame = Instance.new("Frame")
-frame.Name="Main"; frame.Active=true
-frame.Size=UDim2.fromOffset(640, 520)
-frame.Position=UDim2.fromOffset(120, 120)
-frame.BackgroundColor3=Color3.fromRGB(24,24,28)
-frame.Parent=sg
-Instance.new("UICorner", frame).CornerRadius = UDim.new(0,16)
-
-local titleBar = Instance.new("Frame", frame)
-titleBar.Size = UDim2.new(1,0,0,44)
-titleBar.BackgroundColor3 = Color3.fromRGB(32,32,38)
-Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0,16)
-
-local title = Instance.new("TextLabel", titleBar)
-title.BackgroundTransparency=1
-title.Size=UDim2.new(1,-140,1,0)
-title.Position=UDim2.fromOffset(12,0)
-title.Text="🐾 PetMover — Freeze ici / TP vers moi + Freeze / Unfreeze"
-title.TextScaled=true
-title.Font=Enum.Font.SourceSansBold
-title.TextColor3=Color3.fromRGB(235,235,240)
-
-local closeBtn = Instance.new("TextButton", titleBar)
-closeBtn.Text="✕"; closeBtn.TextScaled=true
-closeBtn.Size=UDim2.fromOffset(40,40)
-closeBtn.Position=UDim2.new(1,-44,0,2)
-closeBtn.BackgroundColor3=Color3.fromRGB(60,25,25)
-closeBtn.TextColor3=Color3.fromRGB(245,245,250)
-Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0,12)
-
--- drag
-do
-	local dragging=false; local dragStart; local startPos
-	local function clamp(x,y) local s=sg.AbsoluteSize; local w=frame.AbsoluteSize.X; local h=frame.AbsoluteSize.Y
-		return math.clamp(x,0,math.max(0,s.X-w)), math.clamp(y,0,math.max(0,s.Y-h)) end
-	local function upd(i) local d=i.Position-dragStart; local nx,ny=clamp(startPos.X.Offset+d.X, startPos.Y.Offset+d.Y); frame.Position=UDim2.fromOffset(nx,ny) end
-	titleBar.InputBegan:Connect(function(i)
-		if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=true; dragStart=i.Position; startPos=frame.Position end
-	end)
-	UIS.InputChanged:Connect(function(i)
-		if dragging and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then upd(i) end
-	end)
-	UIS.InputEnded:Connect(function(i)
-		if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=false end
-	end)
-end
-
--- layout
-local content = Instance.new("Frame", frame)
-content.BackgroundTransparency=1
-content.Size=UDim2.new(1,-20,1,-60)
-content.Position=UDim2.fromOffset(10,54)
-
-local left = Instance.new("Frame", content)
-left.BackgroundTransparency=1
-left.Size=UDim2.new(0.46,-6,1,0)
-left.Position=UDim2.fromOffset(0,0)
-
-local right = Instance.new("Frame", content)
-right.BackgroundTransparency=1
-right.Size=UDim2.new(0.54,0,1,0)
-right.Position=UDim2.new(0.46,6,0,0)
-
-local lList = Instance.new("UIListLayout", left)
-lList.Padding = UDim.new(0,8)
-lList.FillDirection = Enum.FillDirection.Vertical
-lList.HorizontalAlignment = Enum.HorizontalAlignment.Left
-lList.VerticalAlignment = Enum.VerticalAlignment.Top
-lList.SortOrder = Enum.SortOrder.LayoutOrder
-
-local pathLbl = Instance.new("TextLabel", left)
-pathLbl.BackgroundTransparency=0.15
-pathLbl.BackgroundColor3=Color3.fromRGB(30,30,36)
-pathLbl.Text="Chemin: workspace.PetsPhysical"
-pathLbl.TextScaled=true
-pathLbl.Font=Enum.Font.SourceSans
-pathLbl.TextColor3=Color3.fromRGB(220,220,230)
-pathLbl.Size=UDim2.new(1,0,0,40)
-Instance.new("UICorner", pathLbl).CornerRadius=UDim.new(0,10)
-
-local statsLbl = Instance.new("TextLabel", left)
-statsLbl.BackgroundTransparency=0.15
-statsLbl.BackgroundColor3=Color3.fromRGB(30,30,36)
-statsLbl.Text="Pets: — | Gelés: —"
-statsLbl.TextScaled=true
-statsLbl.Font=Enum.Font.SourceSans
-statsLbl.TextColor3=Color3.fromRGB(200,200,210)
-statsLbl.Size=UDim2.new(1,0,0,36)
-Instance.new("UICorner", statsLbl).CornerRadius=UDim.new(0,10)
-
-local row = Instance.new("Frame", left)
-row.BackgroundTransparency=1
-row.Size=UDim2.new(1,0,0,44)
-local rowLayout = Instance.new("UIListLayout", row)
-rowLayout.FillDirection = Enum.FillDirection.Horizontal
-rowLayout.Padding = UDim.new(0,8)
-rowLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
-rowLayout.VerticalAlignment = Enum.VerticalAlignment.Top
-
-local scanBtn = Instance.new("TextButton", row)
-scanBtn.Text="Scanner"
-scanBtn.TextScaled=true
-scanBtn.Size=UDim2.new(0.31,0,1,0)
-scanBtn.BackgroundColor3=Color3.fromRGB(35,150,90)
-scanBtn.TextColor3=Color3.fromRGB(245,245,250)
-Instance.new("UICorner", scanBtn).CornerRadius=UDim.new(0,10)
-
-local freezeBtn = Instance.new("TextButton", row)
-freezeBtn.Text="Freeze ici (tous)"
-freezeBtn.TextScaled=true
-freezeBtn.Size=UDim2.new(0.31,0,1,0)
-freezeBtn.BackgroundColor3=Color3.fromRGB(50,60,120)
-freezeBtn.TextColor3=Color3.fromRGB(245,245,250)
-Instance.new("UICorner", freezeBtn).CornerRadius=UDim.new(0,10)
-
-local bringFreezeBtn = Instance.new("TextButton", row)
-bringFreezeBtn.Text="TP vers moi + Freeze"
-bringFreezeBtn.TextScaled=true
-bringFreezeBtn.Size=UDim2.new(0.31,0,1,0)
-bringFreezeBtn.BackgroundColor3=Color3.fromRGB(120,80,20)
-bringFreezeBtn.TextColor3=Color3.fromRGB(245,245,250)
-Instance.new("UICorner", bringFreezeBtn).CornerRadius=UDim.new(0,10)
-
-local unfreezeBtn = Instance.new("TextButton", left)
-unfreezeBtn.Text="⛔ Unfreeze (tous)"
-unfreezeBtn.TextScaled=true
-unfreezeBtn.Size=UDim2.new(1,0,0,38)
-unfreezeBtn.BackgroundColor3=Color3.fromRGB(120,35,35)
-unfreezeBtn.TextColor3=Color3.fromRGB(245,245,250)
-Instance.new("UICorner", unfreezeBtn).CornerRadius=UDim.new(0,10)
-
--- Liste
-local listFrame = Instance.new("Frame", right)
-listFrame.Size=UDim2.new(1,0,1,0)
-listFrame.BackgroundTransparency=0.15
-listFrame.BackgroundColor3=Color3.fromRGB(30,30,36)
-Instance.new("UICorner", listFrame).CornerRadius=UDim.new(0,12)
-
-local listScroll = Instance.new("ScrollingFrame", listFrame)
-listScroll.Size=UDim2.new(1,-10,1,-10)
-listScroll.Position=UDim2.fromOffset(5,5)
-listScroll.BackgroundTransparency=1
-listScroll.ScrollBarThickness=6
-listScroll.CanvasSize=UDim2.new(0,0,0,0)
-
-local lLayout2 = Instance.new("UIListLayout", listScroll)
-lLayout2.Padding = UDim.new(0,4)
-lLayout2.SortOrder = Enum.SortOrder.LayoutOrder
-lLayout2.HorizontalAlignment = Enum.HorizontalAlignment.Left
-lLayout2.VerticalAlignment = Enum.VerticalAlignment.Top
-
-local function clearList()
-	for _,c in ipairs(listScroll:GetChildren()) do
-		if c:IsA("Frame") then c:Destroy() end
-	end
-	listScroll.CanvasSize = UDim2.new(0,0,0,0)
-end
-local function addRow(i, p)
-	local row = Instance.new("Frame")
-	row.Size = UDim2.new(1,-6,0,28)
-	row.BackgroundTransparency = 0.1
-	row.BackgroundColor3 = Color3.fromRGB(38,38,44)
-	row.Parent = listScroll
-	Instance.new("UICorner", row).CornerRadius = UDim.new(0,8)
-
-	local lay = Instance.new("UIListLayout", row)
-	lay.FillDirection = Enum.FillDirection.Horizontal
-	lay.Padding = UDim.new(0,6)
-	lay.HorizontalAlignment = Enum.HorizontalAlignment.Left
-	lay.VerticalAlignment = Enum.VerticalAlignment.Top
-
-	local function cell(w, txt, bold)
-		local l = Instance.new("TextLabel", row)
-		l.BackgroundTransparency = 1
-		l.Size = UDim2.new(w,0,1,0)
-		l.Text = txt
-		l.TextScaled = true
-		l.Font = bold and Enum.Font.SourceSansBold or Enum.Font.SourceSans
-		l.TextColor3 = Color3.fromRGB(225,225,230)
-	end
-
-	local cf = anyCFrame(p.root)
-	local pos = cf.Position
-	local dist = (pos - getChar().HumanoidRootPart.Position).Magnitude
-
-	cell(0.08, ("#%d"):format(i), true)
-	cell(0.38, p.name, true)
-	cell(0.34, ("(%.1f, %.1f, %.1f)"):format(pos.X,pos.Y,pos.Z), false)
-	cell(0.10, string.format("%.1f", dist), false)
-	cell(0.08, p.frozen and "✓" or "—", true)
-end
-local function updateCanvas()
-	task.defer(function()
-		local tot = 0
-		for _,c in ipairs(listScroll:GetChildren()) do
-			if c:IsA("Frame") then tot += c.AbsoluteSize.Y + 4 end
-		end
-		listScroll.CanvasSize = UDim2.new(0,0,0,tot)
-	end)
-end
-
--- Boutons
-local function refreshStats()
-	local frozen = 0; for _,p in ipairs(PETS) do if p.frozen then frozen += 1 end end
-	statsLbl.Text = ("Pets: %d | Gelés: %d"):format(#PETS, frozen)
-end
-
-local function doScan()
-	local petsFolder = workspace:FindFirstChild("PetsPhysical") or workspace:FindFirstChild("petsphysical") or workspace:FindFirstChild("Pets_Physical")
-	if not petsFolder then notify("workspace.PetsPhysical introuvable"); return end
-	petsFolder:GetPropertyChangedSignal("Name"):Connect(function() end) -- garde la ref active dans certains executors
-	scanPets()
-	clearList(); for i,p in ipairs(PETS) do addRow(i,p) end; updateCanvas()
-	refreshStats()
-end
-
-scanBtn.MouseButton1Click:Connect(function() doScan() end)
-freezeBtn.MouseButton1Click:Connect(function() freezeHereAll(); refreshStats() end)
-bringFreezeBtn.MouseButton1Click:Connect(function()
-	bringToMeAndFreezeAll()
-	clearList(); for i,p in ipairs(PETS) do addRow(i,p) end; updateCanvas()
-	refreshStats()
-end)
-unfreezeBtn.MouseButton1Click:Connect(function() unfreezeAll(); refreshStats() end)
-
--- Close/reopen
-closeBtn.MouseButton1Click:Connect(function() frame.Visible=false; reopen.Visible=true end)
-reopen.MouseButton1Click:Connect(function() frame.Visible=true; reopen.Visible=false end)
-
--- Boot
-notify("UI prête — Scan → Freeze ici / TP vers moi + Freeze / Unfreeze.")
-doScan()
