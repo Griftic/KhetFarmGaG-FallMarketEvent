@@ -2,7 +2,7 @@
 -- 🧰 Saad Helper Pack — Build Complet (Player Tuner + Gear + MiniPanel)
 -- - ⌘/Ctrl + Clic = TP (Mac/Windows) — sans freeze caméra
 -- - UI Player Tuner (sliders + noclip + anti-AFK + Gear Panel + Mini Panel)
--- - Gear Panel: Sell, Submit Cauldron, Buy All Seeds/Gear/Eggs + Auto/60s ON
+-- - Gear Panel: Sell, Submit Cauldron, Buy All Seeds/Gear/Eggs + Auto (interval réglable)
 -- - Seeds inclut "Great Pumpkin" — auto-buy actif (BuySeedStock "Shop", <Seed>)
 -- - Bouton: Buy "Level Up Lollipop" x50 (essaie 2 noms possibles)
 -- - Mini Panel v3.8 (✕ fermer / ▭ réduire) :
@@ -44,7 +44,10 @@ local ANTI_AFK_PERIOD   = 60
 local ANTI_AFK_DURATION = 0.35
 
 -- Periods (auto-buy)
-local AUTO_PERIOD = 60 -- ❗ 60s
+local AUTO_PERIOD_DEFAULT = 60 -- ❗ valeur par défaut 60s
+local AUTO_PERIOD_MIN     = 15
+local AUTO_PERIOD_MAX     = 300
+local AUTO_PERIOD_STEP    = 5
 
 -- Seeds/Gears/Eggs
 local SEEDS = {
@@ -65,15 +68,16 @@ local EGGS = { "Common Egg","Uncommon Egg","Rare Egg","Legendary Egg","Mythical 
 --// State
 local currentSpeed, currentGravity, currentJump = 18, 147.1, 60
 local isNoclipping, noclipConnection = false, nil
+local autoPeriodSeconds = AUTO_PERIOD_DEFAULT
 local autoBuySeeds, autoBuyGear, autoBuyEggs = true, true, true
-local seedsTimer, gearTimer, eggsTimer = AUTO_PERIOD, AUTO_PERIOD, AUTO_PERIOD
+local seedsTimer, gearTimer, eggsTimer = autoPeriodSeconds, autoPeriodSeconds, autoPeriodSeconds
 
 -- Anti-AFK (toggle)
 local antiAFKEnabled = false
 local antiAFKBtn
 local antiAFK_IdledConn, antiAFKThread = nil, nil
 
-local seedsTimerLabel, gearTimerLabel, eggsTimerLabel
+local seedsTimerLabel, gearTimerLabel, eggsTimerLabel, autoPeriodValueLabel
 local screenGui, gearGui
 local gearFrame
 local coordsLabel
@@ -432,9 +436,46 @@ end
 -- ================== Timers auto-buy ON ===================
 -- =========================================================
 local function updateTimerLabels()
-	if seedsTimerLabel then seedsTimerLabel.Text = "⏳ Next: "..fmtTime(seedsTimer) end
-	if gearTimerLabel  then gearTimerLabel.Text  = "⏳ Next: "..fmtTime(gearTimer)  end
-	if eggsTimerLabel  then eggsTimerLabel.Text  = "⏳ Next: "..fmtTime(eggsTimer)  end
+        if seedsTimerLabel then seedsTimerLabel.Text = "⏳ Next: "..fmtTime(seedsTimer) end
+        if gearTimerLabel  then gearTimerLabel.Text  = "⏳ Next: "..fmtTime(gearTimer)  end
+        if eggsTimerLabel  then eggsTimerLabel.Text  = "⏳ Next: "..fmtTime(eggsTimer)  end
+end
+
+local function autoPeriodDisplayText()
+        return "⏲️ Interval: "..fmtTime(autoPeriodSeconds)
+end
+
+local function setAutoPeriodSeconds(seconds)
+        local step = AUTO_PERIOD_STEP
+        local target = tonumber(seconds) or AUTO_PERIOD_DEFAULT
+        local rounded = math.floor((target + step / 2) / step) * step
+        rounded = math.clamp(rounded, AUTO_PERIOD_MIN, AUTO_PERIOD_MAX)
+        local previous = autoPeriodSeconds
+        if previous == rounded then
+                if autoPeriodValueLabel then autoPeriodValueLabel.Text = autoPeriodDisplayText() end
+                updateTimerLabels()
+                return
+        end
+        autoPeriodSeconds = rounded
+        if previous < rounded then
+                seedsTimer = rounded
+                gearTimer  = rounded
+                eggsTimer  = rounded
+        else
+                seedsTimer = math.min(seedsTimer, rounded)
+                gearTimer  = math.min(gearTimer,  rounded)
+                eggsTimer  = math.min(eggsTimer,  rounded)
+        end
+        if autoPeriodValueLabel then autoPeriodValueLabel.Text = autoPeriodDisplayText() end
+        updateTimerLabels()
+end
+
+local function adjustAutoPeriod(delta)
+        local before = autoPeriodSeconds
+        setAutoPeriodSeconds(autoPeriodSeconds + (delta or 0))
+        if autoPeriodSeconds ~= before then
+                msg("⏲️ Auto-buy: interval = "..fmtTime(autoPeriodSeconds)..".", Color3.fromRGB(200, 230, 255))
+        end
 end
 task.spawn(function()
 	task.defer(function()
@@ -442,16 +483,16 @@ task.spawn(function()
 		if autoBuyGear  then task.spawn(buyAllGearWorker)  end
 		if autoBuyEggs  then task.spawn(buyAllEggsWorker)  end
 	end)
-	while true do
-		task.wait(1)
-		if autoBuySeeds then seedsTimer -= 1 else seedsTimer = AUTO_PERIOD end
-		if autoBuyGear  then gearTimer  -= 1 else gearTimer  = AUTO_PERIOD end
-		if autoBuyEggs  then eggsTimer  -= 1 else eggsTimer  = AUTO_PERIOD end
-		if autoBuySeeds and seedsTimer<=0 then buyAllSeedsWorker(); seedsTimer=AUTO_PERIOD end
-		if autoBuyGear  and gearTimer<=0  then buyAllGearWorker();  gearTimer =AUTO_PERIOD end
-		if autoBuyEggs  and eggsTimer<=0  then buyAllEggsWorker();  eggsTimer =AUTO_PERIOD end
-		updateTimerLabels()
-	end
+        while true do
+                task.wait(1)
+                if autoBuySeeds then seedsTimer -= 1 else seedsTimer = autoPeriodSeconds end
+                if autoBuyGear  then gearTimer  -= 1 else gearTimer  = autoPeriodSeconds end
+                if autoBuyEggs  then eggsTimer  -= 1 else eggsTimer  = autoPeriodSeconds end
+                if autoBuySeeds and seedsTimer<=0 then buyAllSeedsWorker(); seedsTimer=autoPeriodSeconds end
+                if autoBuyGear  and gearTimer<=0  then buyAllGearWorker();  gearTimer =autoPeriodSeconds end
+                if autoBuyEggs  and eggsTimer<=0  then buyAllEggsWorker();  eggsTimer =autoPeriodSeconds end
+                updateTimerLabels()
+        end
 end)
 
 -- =========================================================
@@ -856,7 +897,7 @@ seedsTimerLabel.Size = UDim2.new(0.30, 0, 1, 0)
 seedsTimerLabel.Position = UDim2.new(0.70, 4, 0, 0)
 seedsTimerLabel.BackgroundColor3 = Color3.fromRGB(60, 65, 95)
 seedsTimerLabel.TextColor3 = Color3.fromRGB(220, 230, 255)
-seedsTimerLabel.Text = "⏳ Next: 1:00"
+seedsTimerLabel.Text = "⏳ Next: "..fmtTime(autoPeriodSeconds)
 seedsTimerLabel.Font = Enum.Font.Gotham
 seedsTimerLabel.TextSize = 12
 seedsTimerLabel.Parent = seedsRow
@@ -896,7 +937,7 @@ gearTimerLabel.Size = UDim2.new(0.30, 0, 1, 0)
 gearTimerLabel.Position = UDim2.new(0.70, 4, 0, 0)
 gearTimerLabel.BackgroundColor3 = Color3.fromRGB(60, 65, 95)
 gearTimerLabel.TextColor3 = Color3.fromRGB(220, 230, 255)
-gearTimerLabel.Text = "⏳ Next: 1:00"
+gearTimerLabel.Text = "⏳ Next: "..fmtTime(autoPeriodSeconds)
 gearTimerLabel.Font = Enum.Font.Gotham
 gearTimerLabel.TextSize = 12
 gearTimerLabel.Parent = gearRow
@@ -936,16 +977,84 @@ eggsTimerLabel.Size = UDim2.new(0.30, 0, 1, 0)
 eggsTimerLabel.Position = UDim2.new(0.70, 4, 0, 0)
 eggsTimerLabel.BackgroundColor3 = Color3.fromRGB(60, 65, 95)
 eggsTimerLabel.TextColor3 = Color3.fromRGB(220, 230, 255)
-eggsTimerLabel.Text = "⏳ Next: 1:00"
+eggsTimerLabel.Text = "⏳ Next: "..fmtTime(autoPeriodSeconds)
 eggsTimerLabel.Font = Enum.Font.Gotham
 eggsTimerLabel.TextSize = 12
 eggsTimerLabel.Parent = eggsRow
 rounded(eggsTimerLabel,8)
 
+-- Auto-buy interval controls
+local autoPeriodRow = Instance.new("Frame")
+autoPeriodRow.Size = UDim2.new(1, 0, 0, 26)
+autoPeriodRow.Position = UDim2.new(0, 0, 0, 222)
+autoPeriodRow.BackgroundTransparency = 1
+autoPeriodRow.Parent = gearContent
+
+local autoPeriodLabel = Instance.new("TextLabel")
+autoPeriodLabel.Size = UDim2.new(0.48, -4, 1, 0)
+autoPeriodLabel.Position = UDim2.new(0, 0, 0, 0)
+autoPeriodLabel.BackgroundTransparency = 1
+autoPeriodLabel.TextXAlignment = Enum.TextXAlignment.Left
+autoPeriodLabel.TextColor3 = Color3.fromRGB(220, 230, 255)
+autoPeriodLabel.Font = Enum.Font.GothamBold
+autoPeriodLabel.TextSize = 12
+autoPeriodLabel.Text = "⏲️ Auto-Buy Interval"
+autoPeriodLabel.Parent = autoPeriodRow
+
+autoPeriodValueLabel = Instance.new("TextLabel")
+autoPeriodValueLabel.Size = UDim2.new(0.26, -4, 1, 0)
+autoPeriodValueLabel.Position = UDim2.new(0.48, 4, 0, 0)
+autoPeriodValueLabel.BackgroundColor3 = Color3.fromRGB(60, 65, 95)
+autoPeriodValueLabel.TextColor3 = Color3.fromRGB(220, 230, 255)
+autoPeriodValueLabel.Font = Enum.Font.Gotham
+autoPeriodValueLabel.TextSize = 12
+autoPeriodValueLabel.Text = autoPeriodDisplayText()
+autoPeriodValueLabel.Parent = autoPeriodRow
+rounded(autoPeriodValueLabel,8)
+
+local minusAutoPeriodBtn = Instance.new("TextButton")
+minusAutoPeriodBtn.Size = UDim2.new(0.12, -4, 1, 0)
+minusAutoPeriodBtn.Position = UDim2.new(0.74, 4, 0, 0)
+minusAutoPeriodBtn.BackgroundColor3 = Color3.fromRGB(90, 110, 160)
+minusAutoPeriodBtn.TextColor3 = Color3.fromRGB(255,255,255)
+minusAutoPeriodBtn.Text = "−5s"
+minusAutoPeriodBtn.Font = Enum.Font.GothamBold
+minusAutoPeriodBtn.TextSize = 14
+minusAutoPeriodBtn.Parent = autoPeriodRow
+rounded(minusAutoPeriodBtn,8)
+
+local plusAutoPeriodBtn = Instance.new("TextButton")
+plusAutoPeriodBtn.Size = UDim2.new(0.12, -4, 1, 0)
+plusAutoPeriodBtn.Position = UDim2.new(0.86, 4, 0, 0)
+plusAutoPeriodBtn.BackgroundColor3 = Color3.fromRGB(110, 150, 200)
+plusAutoPeriodBtn.TextColor3 = Color3.fromRGB(255,255,255)
+plusAutoPeriodBtn.Text = "+5s"
+plusAutoPeriodBtn.Font = Enum.Font.GothamBold
+plusAutoPeriodBtn.TextSize = 14
+plusAutoPeriodBtn.Parent = autoPeriodRow
+rounded(plusAutoPeriodBtn,8)
+
+local function autoPeriodStepMultiplier()
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift) then
+                return 6 -- 6 * 5s = 30s
+        end
+        return 1
+end
+
+minusAutoPeriodBtn.MouseButton1Click:Connect(function()
+        adjustAutoPeriod(-AUTO_PERIOD_STEP * autoPeriodStepMultiplier())
+end)
+
+plusAutoPeriodBtn.MouseButton1Click:Connect(function()
+        adjustAutoPeriod(AUTO_PERIOD_STEP * autoPeriodStepMultiplier())
+end)
+
+setAutoPeriodSeconds(autoPeriodSeconds)
+
 -- Lollipop x50
 local lolliBtn = Instance.new("TextButton")
 lolliBtn.Size = UDim2.new(1, 0, 0, 26)
-lolliBtn.Position = UDim2.new(0, 0, 0, 222)
+lolliBtn.Position = UDim2.new(0, 0, 0, 254)
 lolliBtn.BackgroundColor3 = Color3.fromRGB(200, 140, 90)
 lolliBtn.TextColor3 = Color3.fromRGB(255,255,255)
 lolliBtn.Text = "🍭 BUY LOLLIPOP x50"
@@ -967,9 +1076,9 @@ end)
 submitCauldronBtn.MouseButton1Click:Connect(function()
 	submitAllCauldron_Robust()
 end)
-buyAllSeedsButton.MouseButton1Click:Connect(function() buyAllSeedsWorker(); seedsTimer = AUTO_PERIOD; updateTimerLabels() end)
-buyAllGearButton.MouseButton1Click:Connect(function() buyAllGearWorker();  gearTimer  = AUTO_PERIOD; updateTimerLabels() end)
-buyEggsButton.MouseButton1Click:Connect(function() buyAllEggsWorker();   eggsTimer = AUTO_PERIOD; updateTimerLabels() end)
+buyAllSeedsButton.MouseButton1Click:Connect(function() buyAllSeedsWorker(); seedsTimer = autoPeriodSeconds; updateTimerLabels() end)
+buyAllGearButton.MouseButton1Click:Connect(function() buyAllGearWorker();  gearTimer  = autoPeriodSeconds; updateTimerLabels() end)
+buyEggsButton.MouseButton1Click:Connect(function() buyAllEggsWorker();   eggsTimer = autoPeriodSeconds; updateTimerLabels() end)
 lolliBtn.MouseButton1Click:Connect(buyLollipop50)
 
 local function toggleGear() gearFrame.Visible = not gearFrame.Visible end
