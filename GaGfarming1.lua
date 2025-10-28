@@ -4,14 +4,16 @@
 -- - UI Player Tuner (sliders + noclip + anti-AFK + Gear Panel + Mini Panel + Acorn + FPS Boost)
 -- - Gear Panel: Sell, Submit Cauldron, Buy All Seeds/Gear/Eggs + Auto/60s ON
 -- - Seeds inclut "Great Pumpkin" — auto-buy actif (BuySeedStock "Shop", <Seed>)
--- - Bouton: Buy "Level Up Lollipop" x50 (essaie 2 noms possibles)
+-- - Bouton: Buy "Levelup Lollipop" x50 (nom corrigé)
 -- - Mini Panel v3.8 (✕ fermer / ▭ réduire) :
 --     • 🌾 Auto-Harvest v5.5 — SCAN rayon, turbo, stop à 200 ✔ (+ Halloween ONLY)
 --     • 🌾 Auto Harvest v2.4 — durée réglable (1–6s), backpack stop, OFF immédiat
 --     • 🧪 Submit All (Cauldron) — robuste (RemoteFunction exact + fallback)
+--     • 🧺 SELL Inventory — (mini panel & gear panel)
 --     • 🎃 Submit Halloween → Jack (ALL)
 --     • 🧟 Event Pets/Eggs (Wolf, Spooky Egg, Reaper, Ghost Bear, Pumpkin Rat, Dark Spriggan, Goat)
 --     • 🌀 FARM AUTO (Submit → Harvest [1–5s] → Submit → Wait [3–50s] → loop)
+-- - ⏱️ Auto-achat Spooky Chest (Spooky Seeds) toutes les 20 minutes
 -- - Raccourcis: H = toggle Auto Harvest v2.4 • J = toggle Auto Harvest v5.5
 -- - ▶️ Player Tuner: boutons "🌰 Open Acorn Collector" et "⚡ FPS Boost: ON/OFF"
 -- =====================================================================
@@ -45,7 +47,7 @@ local ANTI_AFK_PERIOD   = 60
 local ANTI_AFK_DURATION = 0.35
 
 -- Periods (auto-buy)
-local AUTO_PERIOD = 60 -- ❗ 60s
+local AUTO_PERIOD = 60 -- 60s
 
 -- Seeds/Gears/Eggs
 local SEEDS = {
@@ -59,7 +61,7 @@ local GEARS = {
 	"Watering Can","Trading Ticket","Trowel","Recall Wrench","Basic Sprinkler","Advanced Sprinkler",
 	"Medium Toy","Medium Treat","Godly Sprinkler","Magnifying Glass","Master Sprinkler",
 	"Cleaning Spray","Cleansing Pet Shard","Favorite Tool","Harvest Tool","Friendship Pot",
-	"Grandmaster Sprinkler","Level Up Lollipop"
+	"Grandmaster Sprinkler","Levelup Lollipop" -- ✅ nom corrigé
 }
 local EGGS = { "Common Egg","Uncommon Egg","Rare Egg","Legendary Egg","Mythical Egg","Bug Egg","Jungle Egg" }
 
@@ -68,6 +70,11 @@ local currentSpeed, currentGravity, currentJump = 18, 147.1, 60
 local isNoclipping, noclipConnection = false, nil
 local autoBuySeeds, autoBuyGear, autoBuyEggs = true, true, true
 local seedsTimer, gearTimer, eggsTimer = AUTO_PERIOD, AUTO_PERIOD, AUTO_PERIOD
+
+-- Auto Spooky Chest (20min)
+local autoSpookyChest = true
+local SPOOKY_PERIOD   = 20*60
+local spookyTimer     = SPOOKY_PERIOD
 
 -- Anti-AFK (toggle)
 local antiAFKEnabled = false
@@ -422,6 +429,16 @@ local function submitAllCauldron_Robust()
 	return false
 end
 
+-- === SELL Inventory util (réutilisé gear + mini panel) ===
+local function sellInventoryOnce()
+	local r = getSellInventoryRemote()
+	if not r then msg("❌ Remote Sell_Inventory introuvable.", Color3.fromRGB(255,120,120)); return end
+	local hrp = getHRP(); if not hrp then msg("❌ HRP introuvable.", Color3.fromRGB(255,120,120)); return end
+	local back = hrp.CFrame
+	teleportTo(SELL_NPC_POS); task.wait(0.20); r:FireServer(); task.wait(0.05); hrp.CFrame = back
+	msg("🧺 Inventaire vendu (TP/retour).", Color3.fromRGB(220,200,140))
+end
+
 -- =========================================================
 -- =========== Backpack detector (robuste) =================
 -- =========================================================
@@ -553,15 +570,32 @@ local function buyAllEggsWorker()
 	msg("🎉 Eggs terminé.")
 end
 
+-- ✅ Lollipop x50 (nom exact uniquement)
 local function buyLollipop50()
 	local r = getBuyGearRemote(); if not r then msg("❌ BuyGearStock introuvable.", Color3.fromRGB(255,120,120)); return end
-	msg("🍭 Achat: Level Up Lollipop x50 …")
+	msg("🍭 Achat: Levelup Lollipop x50 …")
 	for i=1,50 do
-		pcall(function() r:FireServer("Level Up Lollipop") end)
 		pcall(function() r:FireServer("Levelup Lollipop") end)
 		task.wait(0.06)
 	end
 	msg("✅ Lollipop x50 terminé.")
+end
+
+-- 🎃 Achat Spooky Chest (Spooky Seeds)
+local function buySpookyChestOnce()
+	local r = safeWait({"GameEvents","BuyEventShopStock"},2) or safeWait({"GameEvents","FallMarketEvent","BuyEventShopStock"},2)
+	if not (r and r.IsA and r:IsA("RemoteEvent")) then
+		msg("❌ BuyEventShopStock introuvable pour Spooky Chest.", Color3.fromRGB(255,120,120))
+		return
+	end
+	local ok, err = pcall(function()
+		r:FireServer("Spooky Chest", "Spooky Seeds")
+	end)
+	if ok then
+		msg("🎃 Auto-achat: Spooky Chest (Spooky Seeds) ✓", Color3.fromRGB(180,230,180))
+	else
+		msg("⚠️ Spooky Chest achat échec: "..tostring(err), Color3.fromRGB(255,160,140))
+	end
 end
 
 -- =========================================================
@@ -596,15 +630,20 @@ task.spawn(function()
 		if autoBuySeeds then task.spawn(buyAllSeedsWorker) end
 		if autoBuyGear  then task.spawn(buyAllGearWorker)  end
 		if autoBuyEggs  then task.spawn(buyAllEggsWorker)  end
+		if autoSpookyChest then task.spawn(buySpookyChestOnce) end
 	end)
 	while true do
 		task.wait(1)
 		if autoBuySeeds then seedsTimer -= 1 else seedsTimer = AUTO_PERIOD end
 		if autoBuyGear  then gearTimer  -= 1 else gearTimer  = AUTO_PERIOD end
 		if autoBuyEggs  then eggsTimer  -= 1 else eggsTimer  = AUTO_PERIOD end
+		if autoSpookyChest then spookyTimer -= 1 else spookyTimer = SPOOKY_PERIOD end
+
 		if autoBuySeeds and seedsTimer<=0 then buyAllSeedsWorker(); seedsTimer=AUTO_PERIOD end
 		if autoBuyGear  and gearTimer<=0  then buyAllGearWorker();  gearTimer =AUTO_PERIOD end
 		if autoBuyEggs  and eggsTimer<=0  then buyAllEggsWorker();  eggsTimer =AUTO_PERIOD end
+		if autoSpookyChest and spookyTimer<=0 then buySpookyChestOnce(); spookyTimer = SPOOKY_PERIOD end
+
 		updateTimerLabels()
 	end
 end)
@@ -1151,7 +1190,7 @@ lolliBtn.Size = UDim2.new(1, 0, 0, 26)
 lolliBtn.Position = UDim2.new(0, 0, 0, 222)
 lolliBtn.BackgroundColor3 = Color3.fromRGB(200, 140, 90)
 lolliBtn.TextColor3 = Color3.fromRGB(255,255,255)
-lolliBtn.Text = "🍭 BUY LOLLIPOP x50"
+lolliBtn.Text = "🍭 BUY LEVELUP LOLLIPOP x50"
 lolliBtn.Font = Enum.Font.GothamBold
 lolliBtn.TextSize = 12
 lolliBtn.Parent = gearContent
@@ -1159,14 +1198,7 @@ rounded(lolliBtn,8)
 
 -- gear actions
 tpGear.MouseButton1Click:Connect(function() teleportTo(GEAR_SHOP_POS) end)
-sellBtn.MouseButton1Click:Connect(function()
-	local r = getSellInventoryRemote()
-	if not r then msg("❌ Remote Sell_Inventory introuvable.", Color3.fromRGB(255,120,120)); return end
-	local hrp = getHRP(); if not hrp then msg("❌ HRP introuvable.", Color3.fromRGB(255,120,120)); return end
-	local back = hrp.CFrame
-	teleportTo(SELL_NPC_POS); task.wait(0.20); r:FireServer(); task.wait(0.05); hrp.CFrame = back
-	msg("🧺 Inventaire vendu (TP/retour).", Color3.fromRGB(220,200,140))
-end)
+sellBtn.MouseButton1Click:Connect(sellInventoryOnce)
 submitCauldronBtn.MouseButton1Click:Connect(function()
 	submitAllCauldron_Robust()
 end)
@@ -1734,7 +1766,7 @@ local function buildMiniPanel()
 	applyAutoScale(gui)
 
 	local frame = Instance.new("Frame")
-	local MINI_FULL   = UDim2.fromOffset(400, 700)
+	local MINI_FULL   = UDim2.fromOffset(400, 740)
 	local MINI_COLLAP = UDim2.fromOffset(400, 36)
 	frame.Size = MINI_FULL
 	frame.Position = UDim2.fromScale(0.02, 0.22)
@@ -1819,14 +1851,24 @@ local function buildMiniPanel()
 	btnSubmit.TextSize = 13
 	btnSubmit.Parent = row1
 	rounded(btnSubmit, 8)
+	btnSubmit.MouseButton1Click:Connect(function() submitAllCauldron_Robust() end)
 
-	btnSubmit.MouseButton1Click:Connect(function()
-		submitAllCauldron_Robust()
-	end)
+	-- Row 1b : SELL Inventory (ajout mini panel)
+	local row1b = Instance.new("Frame"); row1b.Size = UDim2.new(1, 0, 0, 40); row1b.Position = UDim2.new(0, 0, 0, 44); row1b.BackgroundTransparency = 1; row1b.Parent = container
+	local btnSellMini = Instance.new("TextButton")
+	btnSellMini.Size = UDim2.new(1, 0, 1, 0)
+	btnSellMini.BackgroundColor3 = Color3.fromRGB(200, 130, 90)
+	btnSellMini.TextColor3 = Color3.fromRGB(255,255,255)
+	btnSellMini.Text = "🧺 SELL INVENTORY"
+	btnSellMini.Font = Enum.Font.GothamBold
+	btnSellMini.TextSize = 13
+	btnSellMini.Parent = row1b
+	rounded(btnSellMini, 8)
+	btnSellMini.MouseButton1Click:Connect(sellInventoryOnce)
 
 	-- Row 2 : Event Seeds (Spooky)
 	local titleSeeds = Instance.new("TextLabel")
-	titleSeeds.Size = UDim2.new(1, 0, 0, 20); titleSeeds.Position = UDim2.new(0, 0, 0, 46)
+	titleSeeds.Size = UDim2.new(1, 0, 0, 20); titleSeeds.Position = UDim2.new(0, 0, 0, 90)
 	titleSeeds.BackgroundTransparency = 1; titleSeeds.TextXAlignment = Enum.TextXAlignment.Left
 	titleSeeds.Text = "🎃 EVENT SEEDS (Spooky)"
 	titleSeeds.TextColor3 = Color3.fromRGB(255,235,180)
@@ -1834,7 +1876,7 @@ local function buildMiniPanel()
 
 	local grid = Instance.new("Frame")
 	grid.Size = UDim2.new(1, 0, 0, 168)
-	grid.Position = UDim2.new(0, 0, 0, 68)
+	grid.Position = UDim2.new(0, 0, 0, 112)
 	grid.BackgroundTransparency = 1; grid.Parent = container
 
 	local function mkSeedBtn(xScale, yOff, name)
@@ -1873,7 +1915,7 @@ local function buildMiniPanel()
 	end
 
 	-- Row 3 : 🎃 Submit Jack O Lantern (ALL)
-	local rowJack = Instance.new("Frame"); rowJack.Size = UDim2.new(1, 0, 0, 40); rowJack.Position = UDim2.new(0, 0, 0, 206); rowJack.BackgroundTransparency = 1; rowJack.Parent = container
+	local rowJack = Instance.new("Frame"); rowJack.Size = UDim2.new(1, 0, 0, 40); rowJack.Position = UDim2.new(0, 0, 0, 284); rowJack.BackgroundTransparency = 1; rowJack.Parent = container
 	local jackBtn = Instance.new("TextButton")
 	jackBtn.Size = UDim2.new(1, 0, 1, 0)
 	jackBtn.BackgroundColor3 = Color3.fromRGB(200, 100, 80)
@@ -1892,7 +1934,7 @@ local function buildMiniPanel()
 	-- PETS / EGGS (exact "Creepy Critters")
 	local petsTitle = Instance.new("TextLabel")
 	petsTitle.Size = UDim2.new(1, 0, 0, 20)
-	petsTitle.Position = UDim2.new(0, 0, 0, 250)
+	petsTitle.Position = UDim2.new(0, 0, 0, 328)
 	petsTitle.BackgroundTransparency = 1
 	petsTitle.TextXAlignment = Enum.TextXAlignment.Left
 	petsTitle.Text = "🎃 EVENT PETS / EGGS — (Creepy Critters)"
@@ -1903,41 +1945,41 @@ local function buildMiniPanel()
 
 	local petsGrid = Instance.new("Frame")
 	petsGrid.Size = UDim2.new(1, 0, 0, 168)
-	petsGrid.Position = UDim2.new(0, 0, 0, 272)
+	petsGrid.Position = UDim2.new(0, 0, 0, 350)
 	petsGrid.BackgroundTransparency = 1
 	petsGrid.Parent = container
 
 	local function mkPetBtn(xScale, yOff, label)
-		local b = Instance.new("TextButton")
-		b.Size = UDim2.new(0.48, -4, 0, 30)
-		b.Position = UDim2.new(xScale, xScale==0 and 0 or 4, 0, yOff)
-		b.BackgroundColor3 = Color3.fromRGB(95, 140, 200)
-		b.TextColor3 = Color3.fromRGB(255,255,255)
-		b.Text = "🛒 "..label.." (Creepy Critters)"
-		b.Font = Enum.Font.GothamBold
-		b.TextSize = 12
-		b.Parent = petsGrid
-		rounded(b, 8)
-		b.MouseButton1Click:Connect(function()
-			b.AutoButtonColor=false; b.BackgroundColor3=Color3.fromRGB(75, 110, 160)
-			task.spawn(function()
-				local r = safeWait({"GameEvents","BuyEventShopStock"},2)
-				if not r or not r:IsA("RemoteEvent") then
-					msg("Remote BuyEventShopStock introuvable.", Color3.fromRGB(255,120,120))
-				else
-					local okAny=false
-					for i=1,4 do
-						local ok, _ = pcall(function()
-							r:FireServer(label, "Creepy Critters")
-						end)
-						if ok then okAny=true; msg("🛍️ Achat: "..label.." (Creepy Critters) ✓", Color3.fromRGB(180,230,180)); break
-						else task.wait(0.05) end
-					end
-					if not okAny then msg("⚠️ Achat échec: "..label.." (Creepy Critters)", Color3.fromRGB(255,160,140)) end
+	 local b = Instance.new("TextButton")
+	 b.Size = UDim2.new(0.48, -4, 0, 30)
+	 b.Position = UDim2.new(xScale, xScale==0 and 0 or 4, 0, yOff)
+	 b.BackgroundColor3 = Color3.fromRGB(95, 140, 200)
+	 b.TextColor3 = Color3.fromRGB(255,255,255)
+	 b.Text = "🛒 "..label.." (Creepy Critters)"
+	 b.Font = Enum.Font.GothamBold
+	 b.TextSize = 12
+	 b.Parent = petsGrid
+	 rounded(b, 8)
+	 b.MouseButton1Click:Connect(function()
+		b.AutoButtonColor=false; b.BackgroundColor3=Color3.fromRGB(75, 110, 160)
+		task.spawn(function()
+			local r = safeWait({"GameEvents","BuyEventShopStock"},2)
+			if not r or not r:IsA("RemoteEvent") then
+				msg("Remote BuyEventShopStock introuvable.", Color3.fromRGB(255,120,120))
+			else
+				local okAny=false
+				for i=1,4 do
+					local ok, _ = pcall(function()
+						r:FireServer(label, "Creepy Critters")
+					end)
+					if ok then okAny=true; msg("🛍️ Achat: "..label.." (Creepy Critters) ✓", Color3.fromRGB(180,230,180)); break
+					else task.wait(0.05) end
 				end
-			end)
-			task.delay(0.25, function() b.AutoButtonColor=true; b.BackgroundColor3=Color3.fromRGB(95, 140, 200) end)
+				if not okAny then msg("⚠️ Achat échec: "..label.." (Creepy Critters)", Color3.fromRGB(255,160,140)) end
+			end
 		end)
+		task.delay(0.25, function() b.AutoButtonColor=true; b.BackgroundColor3=Color3.fromRGB(95, 140, 200) end)
+	 end)
 	end
 
 	mkPetBtn(0.00, 0,  "Wolf")
@@ -1949,7 +1991,7 @@ local function buildMiniPanel()
 	mkPetBtn(0.00, 102, "Goat")
 
 	-- Row Auto v2.4 + hint
-	local row4 = Instance.new("Frame"); row4.Size = UDim2.new(1, 0, 0, 70); row4.Position = UDim2.new(0, 0, 0, 460); row4.BackgroundTransparency = 1; row4.Parent = container
+	local row4 = Instance.new("Frame"); row4.Size = UDim2.new(1, 0, 0, 70); row4.Position = UDim2.new(0, 0, 0, 520); row4.BackgroundTransparency = 1; row4.Parent = container
 	local btnAutoV24 = Instance.new("TextButton")
 	btnAutoV24.Size = UDim2.new(1, 0, 0, 32)
 	btnAutoV24.BackgroundColor3 = Color3.fromRGB(200,120,60)
@@ -1972,7 +2014,7 @@ local function buildMiniPanel()
 	hint.Parent = row4
 
 	-- 🔧 Slider v2.4 (1–6s)
-	local v24SliderRow = Instance.new("Frame"); v24SliderRow.Size = UDim2.new(1, 0, 0, 60); v24SliderRow.Position = UDim2.new(0, 0, 0, 500); v24SliderRow.BackgroundTransparency = 1; v24SliderRow.Parent = container
+	local v24SliderRow = Instance.new("Frame"); v24SliderRow.Size = UDim2.new(1, 0, 0, 60); v24SliderRow.Position = UDim2.new(0, 0, 0, 560); v24SliderRow.BackgroundTransparency = 1; v24SliderRow.Parent = container
 	local v24Slider = createSlider(v24SliderRow, 0, "🌾 v2.4 Run Duration (1–6s)", 1, 6, 1, harv24DurationSeconds, function(v)
 		harv24DurationSeconds = v
 		if AutoHarv24.enabled and AutoHarv24.uiBtn and AutoHarv24.uiBtn.Parent then
@@ -1981,12 +2023,12 @@ local function buildMiniPanel()
 	end, 0)
 
 	-- ===== Sliders FARM AUTO =====
-	local slidersRow = Instance.new("Frame"); slidersRow.Size = UDim2.new(1, 0, 0, 120); slidersRow.Position = UDim2.new(0, 0, 0, 560); slidersRow.BackgroundTransparency = 1; slidersRow.Parent = container
+	local slidersRow = Instance.new("Frame"); slidersRow.Size = UDim2.new(1, 0, 0, 120); slidersRow.Position = UDim2.new(0, 0, 0, 620); slidersRow.BackgroundTransparency = 1; slidersRow.Parent = container
 	local harvestSlider = createSlider(slidersRow, 0,   "🌀 Harvest Duration (1–5s)",  1, 5, 1, farmHarvestSeconds, function(v) farmHarvestSeconds = v end, 0)
 	local waitSlider    = createSlider(slidersRow, 60,  "⏳ Wait After Submit (3–50s)", 3, 50,1, farmWaitSeconds,    function(v) farmWaitSeconds = v end, 0)
 
 	-- ===== FARM AUTO Button =====
-	local rowAuto = Instance.new("Frame"); rowAuto.Size = UDim2.new(1, 0, 0, 40); rowAuto.Position = UDim2.new(0, 0, 0, 680); rowAuto.BackgroundTransparency = 1; rowAuto.Parent = container
+	local rowAuto = Instance.new("Frame"); rowAuto.Size = UDim2.new(1, 0, 0, 40); rowAuto.Position = UDim2.new(0, 0, 0, 740); rowAuto.BackgroundTransparency = 1; rowAuto.Parent = container
 	local farmAutoBtn = Instance.new("TextButton")
 	farmAutoBtn.Size = UDim2.new(1, 0, 1, 0)
 	farmAutoBtn.BackgroundColor3 = Color3.fromRGB(90, 160, 90)
@@ -2084,5 +2126,4 @@ UserInputService.InputBegan:Connect(function(input, gp)
 end)
 
 -- Ready
-msg("✅ Saad Helper Pack chargé • Acorn(25s, TP figé) + FPS Boost++ + Submit Jack=ALL • Seeds/Pets events MAJ (Blood Orange, Dark Spriggan, Goat).", Color3.fromRGB(170,230,255))
-
+msg("✅ Saad Helper Pack chargé • Lollipop=Levelup (fix) • SELL dans Mini Panel • Auto Spooky Chest/20min • Acorn(25s) • FPS Boost++ • Seeds/Pets events MAJ.", Color3.fromRGB(170,230,255))
