@@ -1,7 +1,7 @@
 -- =====================================================================
--- 🧰 Saad Helper Pack — Build Complet (Player Tuner + Gear + MiniPanel)
--- - ⌘/Ctrl + Clic = TP (Mac/Windows) — sans freeze caméra
--- - UI Player Tuner (sliders + noclip + anti-AFK + Gear Panel + Mini Panel)
+-- 🧰 Saad Helper Pack — Build Complet (Player Tuner + Gear + MiniPanel + Acorn + FPS Booster)
+-- - ⌘/Ctrl + Clic = TP (Mac/Windows) — sans freeze caméra (TP général)
+-- - UI Player Tuner (sliders + noclip + anti-AFK + Gear Panel + Mini Panel + Acorn + FPS Boost)
 -- - Gear Panel: Sell, Submit Cauldron, Buy All Seeds/Gear/Eggs + Auto/60s ON
 -- - Seeds inclut "Great Pumpkin" — auto-buy actif (BuySeedStock "Shop", <Seed>)
 -- - Bouton: Buy "Level Up Lollipop" x50 (essaie 2 noms possibles)
@@ -13,8 +13,7 @@
 --     • 🧟 Event Pets/Eggs (Wolf, Spooky Egg, Reaper, Ghost Bear, Pumpkin Rat, Dark Spriggan, Goat)
 --     • 🌀 FARM AUTO (Submit → Harvest [1–5s] → Submit → Wait [3–50s] → loop)
 -- - Raccourcis: H = toggle Auto Harvest v2.4 • J = toggle Auto Harvest v5.5
--- - ▶️ Player Tuner: bouton "🌾 Open Harvest v5 Panel"
--- - Tous les panels sont LIBREMENT déplaçables (mobile/PC), sans verrou.
+-- - ▶️ Player Tuner: boutons "🌰 Open Acorn Collector" et "⚡ FPS Boost: ON/OFF"
 -- =====================================================================
 
 --// Services
@@ -30,6 +29,8 @@ local VirtualInputManager     = game:GetService("VirtualInputManager")
 local ProximityPromptService  = game:GetService("ProximityPromptService")
 local CollectionService       = game:GetService("CollectionService")
 local SoundService            = game:GetService("SoundService")
+local Lighting                = game:GetService("Lighting")
+local UserSettingsSvc         = UserSettings and UserSettings() or settings()
 
 local player    = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -79,15 +80,17 @@ local gearFrame
 local coordsLabel
 
 -- ========= FARM AUTO settings =========
--- Ordre: Submit → Harvest (1–5s) → Submit → Wait (3–50s)
-local farmHarvestSeconds = 3    -- slider 1..5
-local farmWaitSeconds    = 10   -- slider 3..50
+local farmHarvestSeconds = 3
+local farmWaitSeconds    = 10
 local farmAutoEnabled    = false
 local farmAutoToken      = 0
 local farmAutoThread     = nil
 
 -- ========= Auto Harvest v2.4 duration (slider 1..6s) =========
 local harv24DurationSeconds = 3
+
+-- ========= Forward decls (Acorn UI) =========
+local BuildAcornUI
 
 -- =========================================================
 -- ====================== Utils / Logs =====================
@@ -156,6 +159,217 @@ local function applyAutoScale(screenGuiX)
 	if cam then cam:GetPropertyChangedSignal("ViewportSize"):Connect(refresh) end
 	UserInputService:GetPropertyChangedSignal("TouchEnabled"):Connect(refresh)
 	UserInputService:GetPropertyChangedSignal("KeyboardEnabled"):Connect(refresh)
+end
+
+-- =========================================================
+-- ================ Camera freeze helper ===================
+-- =========================================================
+local function withFrozenCamera(fn)
+	local cam = workspace.CurrentCamera
+	if not cam then local ok,err = pcall(fn); return end
+	local origType, origSubject, origCF = cam.CameraType, cam.CameraSubject, cam.CFrame
+	pcall(function()
+		cam.CameraType = Enum.CameraType.Scriptable
+		cam.CFrame = origCF
+	end)
+	local ok = pcall(fn)
+	pcall(function()
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if hum then cam.CameraSubject = hum elseif origSubject then cam.CameraSubject = origSubject end
+	end)
+	pcall(function() cam.CFrame = origCF end)
+	pcall(function() cam.CameraType = origType end)
+	return ok
+end
+
+-- =========================================================
+-- =================== FPS Booster (toggle) ================
+-- =========================================================
+local FPSBoost = {
+	enabled    = false,
+	_saved     = { post={}, parts={}, decals={}, surfapp={}, mesh={}, atmos=nil, lighting={}, terrain={}, gameql=nil },
+	_connAdded = nil,
+}
+
+-- Utility to save & restore a property safely
+local function _saveProp(t, inst, prop)
+	local val; local ok, ret = pcall(function() return inst[prop] end)
+	if ok then val = ret else return end
+	table.insert(t, {inst=inst, prop=prop, val=val})
+end
+local function _restoreList(list)
+	for _,rec in ipairs(list) do pcall(function() rec.inst[rec.prop] = rec.val end) end
+end
+
+local function _setGameQualityLow()
+	local ok, ugs = pcall(function() return UserSettingsSvc and UserSettingsSvc:GetService("UserGameSettings") end)
+	if not ok or not ugs then return end
+	local ok2, cur = pcall(function() return ugs.SavedQualityLevel end)
+	if ok2 then FPSBoost._saved.gameql = cur end
+	pcall(function() ugs.SavedQualityLevel = Enum.SavedQualitySetting.Level01 end)
+end
+local function _restoreGameQuality()
+	local ok, ugs = pcall(function() return UserSettingsSvc and UserSettingsSvc:GetService("UserGameSettings") end)
+	if ok and ugs and FPSBoost._saved.gameql ~= nil then pcall(function() ugs.SavedQualityLevel = FPSBoost._saved.gameql end) end
+	FPSBoost._saved.gameql = nil
+end
+
+local function _disablePostEffects()
+	local list = {}
+	for _,eff in ipairs(Lighting:GetChildren()) do
+		if eff:IsA("PostEffect") or eff:IsA("BloomEffect") or eff:IsA("SunRaysEffect")
+		or eff:IsA("ColorCorrectionEffect") or eff:IsA("DepthOfFieldEffect") or eff:IsA("BlurEffect") then
+			_saveProp(list, eff, "Enabled")
+			pcall(function() eff.Enabled = false end)
+		elseif eff:IsA("Atmosphere") then
+			-- handle Atmosphere explicitly
+			if not FPSBoost._saved.atmos then
+				FPSBoost._saved.atmos = {
+					inst = eff,
+					Density = eff.Density,
+					Haze = eff.Haze,
+					Glare = eff.Glare,
+					Decay = eff.Decay,
+					Color = eff.Color,
+				}
+			end
+			pcall(function() eff.Density = 0; eff.Haze = 0; eff.Glare = 0 end)
+		end
+	end
+	-- Lighting-level props
+	local L = Lighting
+	_saveProp(list, L, "GlobalShadows");               pcall(function() L.GlobalShadows=false end)
+	_saveProp(list, L, "EnvironmentDiffuseScale");      pcall(function() L.EnvironmentDiffuseScale=0 end)
+	_saveProp(list, L, "EnvironmentSpecularScale");     pcall(function() L.EnvironmentSpecularScale=0 end)
+	_saveProp(list, L, "Brightness");                   pcall(function() L.Brightness = math.min(1, L.Brightness) end)
+	_saveProp(list, L, "FogStart");                     pcall(function() L.FogStart = 100000 end)
+	_saveProp(list, L, "FogEnd");                       pcall(function() L.FogEnd   = 100000 end)
+	_saveProp(list, L, "Technology");                   pcall(function() L.Technology = Enum.Technology.Compatibility end)
+	return list
+end
+
+local function _setTerrainLow()
+	local ter = workspace:FindFirstChildOfClass("Terrain")
+	if not ter then return {} end
+	local t = {}
+	_saveProp(t, ter, "WaterWaveSize")
+	_saveProp(t, ter, "WaterWaveSpeed")
+	_saveProp(t, ter, "WaterReflectance")
+	_saveProp(t, ter, "WaterTransparency")
+	pcall(function()
+		ter.WaterWaveSize=0; ter.WaterWaveSpeed=0; ter.WaterReflectance=0; ter.WaterTransparency=1
+	end)
+	return t
+end
+
+local function _killVisualDescendant(inst)
+	-- Heavy GPU stuff
+	if inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Beam")
+	or inst:IsA("Smoke") or inst:IsA("Fire") or inst:IsA("Sparkles") then
+		table.insert(FPSBoost._saved.parts, {inst=inst, prop="Enabled", val=(inst.Enabled==nil) and true or inst.Enabled})
+		pcall(function() inst.Enabled=false end)
+		return
+	end
+	-- SurfaceAppearance
+	if inst:IsA("SurfaceAppearance") then
+		table.insert(FPSBoost._saved.surfapp, {inst=inst, prop="Alpha", val=inst.Alpha})
+		pcall(function() inst.Alpha = 0 end)
+		return
+	end
+	-- Decals & Textures
+	if inst:IsA("Decal") or inst:IsA("Texture") then
+		table.insert(FPSBoost._saved.decals, {inst=inst, prop="Transparency", val=inst.Transparency})
+		pcall(function() inst.Transparency = 1 end)
+		return
+	end
+	-- MeshPart settings & BasePart cheapening
+	if inst:IsA("MeshPart") then
+		table.insert(FPSBoost._saved.mesh, {inst=inst, prop="RenderFidelity", val=inst.RenderFidelity})
+		pcall(function() inst.RenderFidelity = Enum.RenderFidelity.Performance end)
+	end
+	if inst:IsA("BasePart") then
+		table.insert(FPSBoost._saved.parts, {inst=inst, prop="CastShadow",   val=inst.CastShadow})
+		table.insert(FPSBoost._saved.parts, {inst=inst, prop="Reflectance",  val=inst.Reflectance})
+		-- MaterialVariant may error on some parts; guard
+		table.insert(FPSBoost._saved.parts, {inst=inst, prop="MaterialVariant", val=pcall(function() return inst.MaterialVariant end) and inst.MaterialVariant or nil})
+		pcall(function()
+			inst.CastShadow = false
+			inst.Reflectance = 0
+			if inst.MaterialVariant ~= nil then inst.MaterialVariant = "" end
+		end)
+	end
+end
+
+local function _scanAndKillVisuals()
+	for _,d in ipairs(Workspace:GetDescendants()) do _killVisualDescendant(d) end
+end
+
+function FPSBoost:on()
+	if self.enabled then return end
+	self.enabled = true
+
+	-- Quality to minimum
+	_setGameQualityLow()
+
+	-- Lighting/Post
+	self._saved.post = _disablePostEffects()
+
+	-- Terrain water
+	self._saved.terrain = _setTerrainLow()
+
+	-- Objects
+	self._saved.parts  = {}
+	self._saved.decals = {}
+	self._saved.surfapp = {}
+	self._saved.mesh   = {}
+	_scanAndKillVisuals()
+
+	-- Hook new descendants
+	if self._connAdded then pcall(function() self._connAdded:Disconnect() end) end
+	self._connAdded = Workspace.DescendantAdded:Connect(function(inst)
+		if not self.enabled then return end
+		_killVisualDescendant(inst)
+	end)
+
+	msg("⚡ FPS Boost: ON — qualité basse + post-effects off + particules/decals/SA/ombres allégés.", Color3.fromRGB(180,230,180))
+end
+
+function FPSBoost:off()
+	if not self.enabled then return end
+	self.enabled = false
+
+	-- Restore visuals
+	_restoreList(self._saved.mesh);   self._saved.mesh = {}
+	_restoreList(self._saved.surfapp); self._saved.surfapp = {}
+	_restoreList(self._saved.decals); self._saved.decals = {}
+	_restoreList(self._saved.parts);  self._saved.parts = {}
+	_restoreList(self._saved.post);   self._saved.post = {}
+	_restoreList(self._saved.terrain); self._saved.terrain = {}
+
+	-- Restore Atmosphere
+	if self._saved.atmos and self._saved.atmos.inst then
+		local A = self._saved.atmos
+		pcall(function()
+			A.inst.Density = A.Density
+			A.inst.Haze    = A.Haze
+			A.inst.Glare   = A.Glare
+			A.inst.Decay   = A.Decay
+			A.inst.Color   = A.Color
+		end)
+	end
+	self._saved.atmos = nil
+
+	-- Unhook
+	if self._connAdded then pcall(function() self._connAdded:Disconnect() end); self._connAdded=nil end
+
+	-- Restore quality level
+	_restoreGameQuality()
+
+	msg("⚡ FPS Boost: OFF — paramètres restaurés.", Color3.fromRGB(230,200,180))
+end
+
+local function toggleFPSBoost()
+	if FPSBoost.enabled then FPSBoost:off() else FPSBoost:on() end
 end
 
 -- =========================================================
@@ -353,7 +567,6 @@ end
 -- =========================================================
 -- ========== 🎃 Jack-O-Lantern Submit (ALL) ===============
 -- =========================================================
--- Remplacement demandé : soumission "All" directe.
 local function submitJackAll()
 	local ok, err = pcall(function()
 		local args = { [1] = "All" }
@@ -413,7 +626,9 @@ screenGui.Parent = playerGui
 applyAutoScale(screenGui)
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.fromOffset(320, 392)
+local fullSize = UDim2.fromOffset(320, 420)
+local collapsedSize = UDim2.fromOffset(320, 36)
+mainFrame.Size = fullSize
 mainFrame.Position = UDim2.fromScale(0.02, 0.04)
 mainFrame.BackgroundColor3 = Color3.fromRGB(36,36,36)
 mainFrame.BorderSizePixel = 0
@@ -449,8 +664,6 @@ closeButton.Parent = titleBar
 rounded(closeButton, 0)
 
 local isMinimized = false
-local fullSize = UDim2.fromOffset(320, 392)
-local collapsedSize = UDim2.fromOffset(320, 36)
 local minimizeButton = Instance.new("TextButton")
 minimizeButton.Size = UDim2.fromOffset(26, 26)
 minimizeButton.Position = UDim2.new(1, -66, 0, 5)
@@ -573,12 +786,59 @@ openV5Btn.TextSize = 13
 openV5Btn.Parent = v5Row
 rounded(openV5Btn,8)
 
+-- === NEW: Open Acorn Collector button ===
+local acornRow = Instance.new("Frame"); acornRow.Size = UDim2.new(1, 0, 0, 36); acornRow.Position = UDim2.new(0, 0, 0, 308); acornRow.BackgroundTransparency = 1; acornRow.Parent = content
+local openAcornBtn = Instance.new("TextButton")
+openAcornBtn.Size = UDim2.new(1, 0, 1, 0)
+openAcornBtn.BackgroundColor3 = Color3.fromRGB(200,160,60)
+openAcornBtn.TextColor3 = Color3.fromRGB(255,255,255)
+openAcornBtn.Text = "🌰 Open Acorn Collector"
+openAcornBtn.Font = Enum.Font.GothamBold
+openAcornBtn.TextSize = 13
+openAcornBtn.Parent = acornRow
+rounded(openAcornBtn,8)
+
+-- === NEW: FPS Boost toggle button ===
+local fpsRow = Instance.new("Frame"); fpsRow.Size = UDim2.new(1, 0, 0, 36); fpsRow.Position = UDim2.new(0, 0, 0, 344); fpsRow.BackgroundTransparency = 1; fpsRow.Parent = content
+local fpsBtn = Instance.new("TextButton")
+fpsBtn.Size = UDim2.new(1, 0, 1, 0)
+fpsBtn.BackgroundColor3 = Color3.fromRGB(80, 160, 120)
+fpsBtn.TextColor3 = Color3.fromRGB(255,255,255)
+fpsBtn.Text = "⚡ FPS Boost: OFF"
+fpsBtn.Font = Enum.Font.GothamBold
+fpsBtn.TextSize = 13
+fpsBtn.Parent = fpsRow
+rounded(fpsBtn,8)
+
 local hintRow = Instance.new("TextLabel")
-hintRow.Size = UDim2.new(1, 0, 0, 22); hintRow.Position = UDim2.new(0, 0, 0, 308)
+hintRow.Size = UDim2.new(1, 0, 0, 22); hintRow.Position = UDim2.new(0, 0, 0, 380)
 hintRow.BackgroundTransparency = 1; hintRow.TextXAlignment = Enum.TextXAlignment.Left
 hintRow.Font = Enum.Font.Gotham; hintRow.TextSize = 12; hintRow.TextColor3 = Color3.fromRGB(200,220,255)
-hintRow.Text = "⌘/Ctrl + clic = TP • H: Harvest v2.4  •  J: Harvest v5.5 (turbo + stop 200)"
+hintRow.Text = "⌘/Ctrl + clic = TP • H = v2.4  •  J = v5.5 • FPS Boost réduit effets/particules"
 hintRow.Parent = content
+
+-- === buttons logic
+fpsBtn.MouseButton1Click:Connect(function()
+	toggleFPSBoost()
+	fpsBtn.Text = FPSBoost.enabled and "⚡ FPS Boost: ON" or "⚡ FPS Boost: OFF"
+	fpsBtn.BackgroundColor3 = FPSBoost.enabled and Color3.fromRGB(80, 180, 100) or Color3.fromRGB(80,160,120)
+end)
+
+-- Open Acorn UI
+openAcornBtn.MouseButton1Click:Connect(function()
+	local g = BuildAcornUI()
+	if g then
+		g.Enabled = true
+		openAcornBtn.AutoButtonColor = false
+		openAcornBtn.BackgroundColor3 = Color3.fromRGB(170,135,50)
+		task.delay(0.18, function()
+			openAcornBtn.AutoButtonColor = true
+			openAcornBtn.BackgroundColor3 = Color3.fromRGB(200,160,60)
+		end)
+	else
+		msg("❌ BuildAcornUI introuvable (module non chargé).", Color3.fromRGB(255,120,120))
+	end
+end)
 
 local function setAntiAFK(enabled)
 	if enabled == antiAFKEnabled then return end
@@ -636,6 +896,7 @@ end)
 
 closeButton.MouseButton1Click:Connect(function()
 	if isNoclipping and noclipConnection then noclipConnection:Disconnect(); noclipConnection=nil end
+	if FPSBoost.enabled then FPSBoost:off() end
 	setAntiAFK(false)
 	if gearGui then gearGui:Destroy() end
 	if screenGui then screenGui:Destroy() end
@@ -1270,7 +1531,7 @@ do
 	function AutoHarv5.start() if not STATE.enabled then STATE.enabled=true; STATE.runCount=0; task.spawn(mainLoop) end end
 	function AutoHarv5.stop()  if STATE.enabled then STATE.enabled=false end end
 
-	-- ========= UI DÉDIÉE v5.5 (with Halloween toggle) =========
+	-- ========= UI v5.5 =========
 	local function buildUI()
 		if STATE.ui and STATE.ui.Parent then STATE.ui.Enabled = true; return STATE.ui end
 		local gui = Instance.new("ScreenGui"); gui.Name = "Saad_AutoHarvest_v55"; gui.IgnoreGuiInset = true; gui.ResetOnSpawn = false; gui.Parent = playerGui
@@ -1310,6 +1571,153 @@ do
 		local g = buildUI()
 		if g then g.Enabled = true end
 	end
+end
+
+-- =========================================================
+-- ===================== ACORN COLLECTOR ===================
+-- =========================================================
+do
+	local ACORN_NAME = "Acorn"
+	local SCAN_PERIOD = 25
+	local RETURN_TO_START = true
+	local TP_Y_OFFSET = 3
+
+	local acornGuiCache
+
+	local function findAcorns()
+		local list = {}
+		for _,obj in ipairs(Workspace:GetDescendants()) do
+			if obj and obj:IsA("BasePart") and obj.Name == ACORN_NAME then
+				table.insert(list, obj)
+			elseif obj and obj:IsA("Model") and obj.Name == ACORN_NAME then
+				local bp = obj:FindFirstChildWhichIsA("BasePart")
+				if bp then table.insert(list, bp) end
+			end
+		end
+		return list
+	end
+	local function nearestToHRP(parts)
+		local hrp = getHRP(); if not (hrp and parts and #parts>0) then return nil end
+		local best, dist = nil, math.huge
+		for _,p in ipairs(parts) do
+			if p and p.Parent then
+				local d = (p.Position - hrp.Position).Magnitude
+				if d < dist then best=p; dist=d end
+			end
+		end
+		return best
+	end
+	local function tryCollect(acornPart)
+		local hrp = getHRP(); if not (hrp and acornPart) then return false end
+		local start = hrp.CFrame
+		local target = acornPart.Position + Vector3.new(0, TP_Y_OFFSET, 0)
+		local function doWork()
+			pcall(function()
+				hrp.AssemblyLinearVelocity = Vector3.new()
+				hrp.AssemblyAngularVelocity = Vector3.new()
+				hrp.CFrame = CFrame.new(target)
+				task.wait(0.08)
+				local prompt = acornPart:FindFirstChildOfClass("ProximityPrompt") or (acornPart.Parent and acornPart.Parent:FindFirstChildOfClass("ProximityPrompt"))
+				if prompt then
+					pcall(function()
+						prompt.Enabled = true; prompt.MaxActivationDistance = 9999; if prompt.RequiresLineOfSight ~= nil then prompt.RequiresLineOfSight=false end
+						if HAS_FIRE_PROX then pcall(_FPP, prompt, 1) pcall(_FPP, prompt) end
+					end)
+				end
+				local click = acornPart:FindFirstChildOfClass("ClickDetector") or (acornPart.Parent and acornPart.Parent:FindFirstChildOfClass("ClickDetector"))
+				if click and typeof(fireclickdetector)=="function" then pcall(fireclickdetector, click) end
+				task.wait(0.12)
+				if RETURN_TO_START then hrp.CFrame = start end
+			end)
+		end
+		withFrozenCamera(doWork)
+		return true
+	end
+
+	local function buildUI()
+		if acornGuiCache and acornGuiCache.Parent then return acornGuiCache end
+		local gui = Instance.new("ScreenGui"); gui.Name="AcornLite2"; gui.ResetOnSpawn=false; gui.IgnoreGuiInset=false; gui.Parent=playerGui
+		applyAutoScale(gui)
+
+		local frame = Instance.new("Frame"); frame.Size=UDim2.fromOffset(340,220); frame.Position=UDim2.fromScale(0.72,0.28); frame.BackgroundColor3=Color3.fromRGB(25,25,30); frame.BorderSizePixel=0; frame.Parent=gui; rounded(frame,12)
+		makeDraggable(frame, frame)
+
+		local header = Instance.new("Frame"); header.Size=UDim2.new(1,0,0,36); header.BackgroundColor3=Color3.fromRGB(30,30,38); header.Parent=frame; rounded(header,12)
+		local title = Instance.new("TextLabel"); title.Size=UDim2.new(1,-90,1,0); title.Position=UDim2.new(0,12,0,0); title.BackgroundTransparency=1; title.Font=Enum.Font.GothamBold; title.TextSize=16; title.TextXAlignment=Enum.TextXAlignment.Left; title.Text="🌰 Acorn Collector"; title.TextColor3=Color3.fromRGB(255,200,0); title.Parent=header
+		local close = Instance.new("TextButton"); close.Size=UDim2.fromOffset(26,26); close.Position=UDim2.new(1,-32,0.5,-13); close.BackgroundColor3=Color3.fromRGB(220,60,60); close.Text="✕"; close.TextColor3=Color3.fromRGB(255,255,255); close.Font=Enum.Font.GothamBold; close.TextSize=14; close.Parent=header; rounded(close,6)
+		close.MouseButton1Click:Connect(function() gui.Enabled=false end)
+
+		local status = Instance.new("TextLabel"); status.Size=UDim2.new(1,-20,0,24); status.Position=UDim2.new(0,10,0,48); status.BackgroundTransparency=1; status.TextXAlignment=Enum.TextXAlignment.Left; status.Font=Enum.Font.Gotham; status.TextSize=13; status.TextColor3=Color3.fromRGB(210,220,230); status.Text="📍 Status: En veille"; status.Parent=frame
+		local timer  = Instance.new("TextLabel"); timer.Size=UDim2.new(1,-20,0,24); timer.Position=UDim2.new(0,10,0,70); timer.BackgroundTransparency=1; timer.TextXAlignment=Enum.TextXAlignment.Left; timer.Font=Enum.Font.Gotham; timer.TextSize=13; timer.TextColor3=Color3.fromRGB(240,210,120); timer.Text="⏱️ Prochain scan: 25s"; timer.Parent=frame
+
+		local btnRow = Instance.new("Frame"); btnRow.Size=UDim2.new(1,-20,0,36); btnRow.Position=UDim2.new(0,10,0,104); btnRow.BackgroundTransparency=1; btnRow.Parent=frame
+		local scanNow = Instance.new("TextButton"); scanNow.Size=UDim2.new(0.48,-4,1,0); scanNow.Position=UDim2.new(0,0,0,0); scanNow.BackgroundColor3=Color3.fromRGB(90,140,210); scanNow.TextColor3=Color3.fromRGB(255,255,255); scanNow.Text="🔎 Scan Now"; scanNow.Font=Enum.Font.GothamBold; scanNow.TextSize=13; scanNow.Parent=btnRow; rounded(scanNow,8)
+		local autoBtn = Instance.new("TextButton"); autoBtn.Size=UDim2.new(0.52,0,1,0); autoBtn.Position=UDim2.new(0.48,4,0,0); autoBtn.BackgroundColor3=Color3.fromRGB(110,150,90); autoBtn.TextColor3=Color3.fromRGB(255,255,255); autoBtn.Text="📡 Auto-scan: ON (25s)"; autoBtn.Font=Enum.Font.GothamBold; autoBtn.TextSize=13; autoBtn.Parent=btnRow; rounded(autoBtn,8)
+
+		local tpRow = Instance.new("Frame"); tpRow.Size=UDim2.new(1,-20,0,36); tpRow.Position=UDim2.new(0,10,0,146); tpRow.BackgroundTransparency=1; tpRow.Parent=frame
+		local autoTPBtn = Instance.new("TextButton"); autoTPBtn.Size=UDim2.new(1,0,1,0); autoTPBtn.BackgroundColor3=Color3.fromRGB(60,200,60); autoTPBtn.TextColor3=Color3.fromRGB(255,255,255); autoTPBtn.Text="⚡ Auto Collect (TP figé): ON"; autoTPBtn.Font=Enum.Font.GothamBold; autoTPBtn.TextSize=13; autoTPBtn.Parent=tpRow; rounded(autoTPBtn,8)
+
+		local state = { auto=true, autoScan=true, tLeft=25 }
+
+		local function refreshButtons()
+			autoTPBtn.BackgroundColor3 = state.auto and Color3.fromRGB(60,200,60) or Color3.fromRGB(200,60,60)
+			autoTPBtn.Text = state.auto and "⚡ Auto Collect (TP figé): ON" or "⚡ Auto Collect (TP figé): OFF"
+			autoBtn.BackgroundColor3 = state.autoScan and Color3.fromRGB(110,150,90) or Color3.fromRGB(80,100,140)
+			autoBtn.Text = (state.autoScan and "📡 Auto-scan: ON (25s)" or "📡 Auto-scan: OFF")
+		end
+		refreshButtons()
+
+		local function doScan()
+			local found = findAcorns()
+			if #found == 0 then status.Text="📍 Status: Aucun acorn."; status.TextColor3=Color3.fromRGB(210,210,210); return false end
+			local best = nearestToHRP(found)
+			if not best then status.Text="📍 Status: Aucun acorn proche."; status.TextColor3=Color3.fromRGB(210,210,210); return false end
+			status.Text = ("📍 Status: ACORN détecté (%.1fu)."):format((best.Position - (getHRP() and getHRP().Position or best.Position)).Magnitude)
+			status.TextColor3=Color3.fromRGB(120,230,120)
+			if state.auto then
+				tryCollect(best)
+			end
+			return true
+		end
+
+		scanNow.MouseButton1Click:Connect(function()
+			doScan()
+			state.tLeft = 25
+			timer.Text = "⏱️ Prochain scan: "..tostring(state.tLeft).."s"
+		end)
+		autoBtn.MouseButton1Click:Connect(function()
+			state.autoScan = not state.autoScan
+			refreshButtons()
+		end)
+		autoTPBtn.MouseButton1Click:Connect(function()
+			state.auto = not state.auto
+			refreshButtons()
+		end)
+
+		task.spawn(function()
+			while gui and gui.Parent do
+				if gui.Enabled and state.autoScan then
+					doScan()
+					state.tLeft = 25
+					for i=1, 25 do
+						if not (gui and gui.Parent) then break end
+						if not gui.Enabled then break end
+						if not state.autoScan then break end
+						state.tLeft -= 1
+						timer.Text = "⏱️ Prochain scan: "..tostring(math.max(0, state.tLeft)).."s"
+						task.wait(1)
+					end
+				else
+					task.wait(0.2)
+				end
+			end
+		end)
+
+		acornGuiCache = gui
+		return gui
+	end
+
+	BuildAcornUI = buildUI
 end
 
 -- =========================================================
@@ -1425,7 +1833,7 @@ local function buildMiniPanel()
 	titleSeeds.Font = Enum.Font.GothamBold; titleSeeds.TextSize = 13; titleSeeds.Parent = container
 
 	local grid = Instance.new("Frame")
-	grid.Size = UDim2.new(1, 0, 0, 168) -- ↗️ hauteur augmentée pour 7 seeds
+	grid.Size = UDim2.new(1, 0, 0, 168)
 	grid.Position = UDim2.new(0, 0, 0, 68)
 	grid.BackgroundTransparency = 1; grid.Parent = container
 
@@ -1456,7 +1864,6 @@ local function buildMiniPanel()
 		end)
 	end
 
-	-- ⬇️ Ajout de "Blood Orange"
 	local EVENT_SEEDS = { "Bloodred Mushroom","Jack O Lantern","Ghoul Root","Chicken Feed","Seer Vine","Poison Apple","Blood Orange" }
 	local col, row = 0, 0
 	for _, name in ipairs(EVENT_SEEDS) do
@@ -1495,7 +1902,7 @@ local function buildMiniPanel()
 	petsTitle.Parent = container
 
 	local petsGrid = Instance.new("Frame")
-	petsGrid.Size = UDim2.new(1, 0, 0, 168) -- ↗️ hauteur augmentée pour 7 items
+	petsGrid.Size = UDim2.new(1, 0, 0, 168)
 	petsGrid.Position = UDim2.new(0, 0, 0, 272)
 	petsGrid.BackgroundTransparency = 1
 	petsGrid.Parent = container
@@ -1533,14 +1940,13 @@ local function buildMiniPanel()
 		end)
 	end
 
-	-- Liste mise à jour (ajouts: Dark Spriggan, Goat)
 	mkPetBtn(0.00, 0,  "Wolf")
 	mkPetBtn(0.52, 0,  "Spooky Egg")
 	mkPetBtn(0.00, 34, "Reaper")
 	mkPetBtn(0.52, 34, "Ghost Bear")
 	mkPetBtn(0.00, 68, "Pumpkin Rat")
-	mkPetBtn(0.52, 68, "Dark Spriggan") -- ⬅️ ajouté
-	mkPetBtn(0.00, 102, "Goat")         -- ⬅️ ajouté
+	mkPetBtn(0.52, 68, "Dark Spriggan")
+	mkPetBtn(0.00, 102, "Goat")
 
 	-- Row Auto v2.4 + hint
 	local row4 = Instance.new("Frame"); row4.Size = UDim2.new(1, 0, 0, 70); row4.Position = UDim2.new(0, 0, 0, 460); row4.BackgroundTransparency = 1; row4.Parent = container
@@ -1678,4 +2084,5 @@ UserInputService.InputBegan:Connect(function(input, gp)
 end)
 
 -- Ready
-msg("✅ Saad Helper Pack chargé • Submit Jack=ALL • Seeds/Pets events MAJ (Blood Orange, Dark Spriggan, Goat).", Color3.fromRGB(170,230,255))
+msg("✅ Saad Helper Pack chargé • Acorn(25s, TP figé) + FPS Boost++ + Submit Jack=ALL • Seeds/Pets events MAJ (Blood Orange, Dark Spriggan, Goat).", Color3.fromRGB(170,230,255))
+
